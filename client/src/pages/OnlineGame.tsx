@@ -54,7 +54,6 @@ function lobbyPlayerToState(player: any): PlayerState {
 
 interface OnlineInput {
   up: boolean;
-  down: boolean;
   left: boolean;
   right: boolean;
 }
@@ -62,7 +61,6 @@ interface OnlineInput {
 function inputMask(input: OnlineInput) {
   let mask = 0;
   if (input.up) mask |= 1;
-  if (input.down) mask |= 2;
   if (input.left) mask |= 4;
   if (input.right) mask |= 8;
   return mask;
@@ -71,7 +69,6 @@ function inputMask(input: OnlineInput) {
 function currentInput(keys: Record<string, boolean>): OnlineInput {
   return {
     up: !!keys["w"] || !!keys["ArrowUp"] || !!keys["8"] || !!keys["W"] || !!keys[" "] || !!keys["Spacebar"],
-    down: !!keys["s"] || !!keys["ArrowDown"] || !!keys["5"] || !!keys["S"],
     left: !!keys["a"] || !!keys["ArrowLeft"] || !!keys["4"] || !!keys["A"],
     right: !!keys["d"] || !!keys["ArrowRight"] || !!keys["6"] || !!keys["D"],
   };
