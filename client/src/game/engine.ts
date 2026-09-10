@@ -165,14 +165,25 @@ function collidesWithObstacles(
   return false;
 }
 
-function isGrounded(player: PlayerState, map: GameMap): boolean {
-  const playerH = PLAYER_SIZE * 2;
-  return player.y >= map.height - playerH - 0.5 || collidesWithObstacles(player.x, player.y + 2, map.obstacles);
-}
-
 function horizontallyOverlaps(x: number, obstacle: Obstacle): boolean {
   const playerW = PLAYER_SIZE * 2;
   return x + playerW > obstacle.x && x < obstacle.x + obstacle.w;
+}
+
+function isGrounded(player: { x: number; y: number; vy: number }, map: GameMap): boolean {
+  if (player.vy < -0.1) return false;
+  const playerH = PLAYER_SIZE * 2;
+  const bottom = player.y + playerH;
+  if (bottom >= map.height - 0.5) return true;
+
+  for (const o of map.obstacles) {
+    if (horizontallyOverlaps(player.x, o)) {
+      if (bottom >= o.y - 1 && bottom <= o.y + 3 && player.y < o.y) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function moveVertically(player: PlayerState, newY: number, map: GameMap) {

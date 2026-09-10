@@ -54,7 +54,6 @@ function lobbyPlayerToState(player: any): PlayerState {
 
 interface OnlineInput {
   up: boolean;
-  down: boolean;
   left: boolean;
   right: boolean;
 }
@@ -62,7 +61,6 @@ interface OnlineInput {
 function inputMask(input: OnlineInput) {
   let mask = 0;
   if (input.up) mask |= 1;
-  if (input.down) mask |= 2;
   if (input.left) mask |= 4;
   if (input.right) mask |= 8;
   return mask;
@@ -70,10 +68,9 @@ function inputMask(input: OnlineInput) {
 
 function currentInput(keys: Record<string, boolean>): OnlineInput {
   return {
-    up: !!keys["w"] || !!keys["ArrowUp"] || !!keys["8"],
-    down: !!keys["s"] || !!keys["ArrowDown"] || !!keys["5"],
-    left: !!keys["a"] || !!keys["ArrowLeft"] || !!keys["4"],
-    right: !!keys["d"] || !!keys["ArrowRight"] || !!keys["6"],
+    up: !!keys["w"] || !!keys["ArrowUp"] || !!keys["8"] || !!keys["W"] || !!keys[" "] || !!keys["Spacebar"],
+    left: !!keys["a"] || !!keys["ArrowLeft"] || !!keys["4"] || !!keys["A"],
+    right: !!keys["d"] || !!keys["ArrowRight"] || !!keys["6"] || !!keys["D"],
   };
 }
 
@@ -90,9 +87,20 @@ function horizontallyOverlaps(x: number, obstacle: Obstacle) {
   return x + playerW > obstacle.x && x < obstacle.x + obstacle.w;
 }
 
-function isGrounded(player: PlayerState, map: GameMap) {
+function isGrounded(player: { x: number; y: number; vy: number }, map: GameMap) {
+  if (player.vy < -0.1) return false;
   const playerH = PLAYER_SIZE * 2;
-  return player.y >= map.height - playerH - 0.5 || collidesWithObstacles(player.x, player.y + 2, map.obstacles);
+  const bottom = player.y + playerH;
+  if (bottom >= map.height - 0.5) return true;
+
+  for (const o of map.obstacles) {
+    if (horizontallyOverlaps(player.x, o)) {
+      if (bottom >= o.y - 1 && bottom <= o.y + 3 && player.y < o.y) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function movePredictedVertically(player: PlayerState, newY: number, map: GameMap) {
@@ -127,7 +135,15 @@ function movePredictedVertically(player: PlayerState, newY: number, map: GameMap
   }
 }
 
-function predictLocalPlayer(serverPlayer: PlayerState, previousPlayer: PlayerState, input: OnlineInput, map: GameMap, dtMs: number) {
+function predictLocalPlayer(
+  serverPlayer: PlayerState,
+  previousPlayer: PlayerState,
+  input: OnlineInput,
+  canJump: boolean,
+  onJumpConsumed: () => void,
+  map: GameMap,
+  dtMs: number
+) {
   const predicted: PlayerState = {
     ...serverPlayer,
     x: previousPlayer.x,
@@ -149,8 +165,9 @@ function predictLocalPlayer(serverPlayer: PlayerState, previousPlayer: PlayerSta
     if (input.left) dx -= speed * frameScale;
     if (input.right) dx += speed * frameScale;
     if (dx !== 0) predicted.facing = { x: Math.sign(dx), y: 0 };
-    if (input.up && isGrounded(predicted, map)) {
+    if (canJump && isGrounded(predicted, map)) {
       predicted.vy = -PLAYER_JUMP_SPEED;
+      onJumpConsumed();
     }
   }
 
@@ -170,15 +187,36 @@ function predictLocalPlayer(serverPlayer: PlayerState, previousPlayer: PlayerSta
   predicted.y = Math.max(0, Math.min(map.height - PLAYER_SIZE * 2, predicted.y));
   if (predicted.y >= map.height - PLAYER_SIZE * 2) predicted.vy = 0;
 
-  const error = Math.hypot(serverPlayer.x - predicted.x, serverPlayer.y - predicted.y);
-  if (error > 150) {
+  const errorX = serverPlayer.x - predicted.x;
+  const errorY = serverPlayer.y - predicted.y;
+  const error = Math.hypot(errorX, errorY);
+
+  if (error > 48) {
     predicted.x = serverPlayer.x;
     predicted.y = serverPlayer.y;
     predicted.vx = serverPlayer.vx;
     predicted.vy = serverPlayer.vy;
   } else {
-    predicted.x += (serverPlayer.x - predicted.x) * 0.08;
-    predicted.y += (serverPlayer.y - predicted.y) * 0.08;
+    if (Math.abs(errorX) > 0.5) {
+      const nextX = predicted.x + errorX * 0.1;
+      if (!collidesWithObstacles(nextX, predicted.y, map.obstacles)) {
+        predicted.x = nextX;
+      }
+    }
+
+    if (isGrounded(serverPlayer, map)) {
+      if (Math.abs(errorY) > 0.5) {
+        predicted.y += errorY * 0.2;
+      }
+      if (predicted.vy > 0) {
+        predicted.vy = 0;
+      }
+    } else {
+      if (Math.abs(errorY) > 1) {
+        predicted.y += errorY * 0.05;
+      }
+      predicted.vy += (serverPlayer.vy - predicted.vy) * 0.1;
+    }
   }
 
   return predicted;
@@ -190,6 +228,8 @@ function smoothOnlinePlayers(
   dtMs: number,
   localPlayerId: string | undefined,
   input: OnlineInput,
+  canJump: boolean,
+  onJumpConsumed: () => void,
   map: GameMap
 ) {
   const nextPlayers = new Map<string, PlayerState>();
@@ -202,7 +242,7 @@ function smoothOnlinePlayers(
     }
 
     const smoothed = player.id === localPlayerId
-      ? predictLocalPlayer(player, previous, input, map, dtMs)
+      ? predictLocalPlayer(player, previous, input, canJump, onJumpConsumed, map, dtMs)
       : (() => {
         const dx = player.x - previous.x;
         const dy = player.y - previous.y;
@@ -263,6 +303,8 @@ export default function OnlineGame() {
   const smoothedPlayersRef = useRef<Map<string, PlayerState>>(new Map());
   const connectedRef = useRef(false);
   const eventsRef = useRef<any[]>([]);
+  const lastJumpHeldRef = useRef(false);
+  const jumpBufferMsRef = useRef(0);
 
   useEffect(() => {
     const connect = async () => {
@@ -348,6 +390,8 @@ export default function OnlineGame() {
           setHudTimeLeft(roundLength);
           smoothedPlayersRef.current.clear();
           lastRenderAtRef.current = 0;
+          lastJumpHeldRef.current = false;
+          jumpBufferMsRef.current = 0;
           setStatus("playing");
         });
 
@@ -390,19 +434,6 @@ export default function OnlineGame() {
   useEffect(() => {
     if (status !== "playing") return;
 
-    const handleDown = (e: KeyboardEvent) => {
-      keysRef.current[e.key] = true;
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
-        e.preventDefault();
-      }
-    };
-    const handleUp = (e: KeyboardEvent) => {
-      keysRef.current[e.key] = false;
-    };
-
-    window.addEventListener("keydown", handleDown);
-    window.addEventListener("keyup", handleUp);
-
     const sendInput = () => {
       const room = roomRef.current;
       if (!room) return;
@@ -415,6 +446,21 @@ export default function OnlineGame() {
         lastInputSentAtRef.current = now;
       }
     };
+
+    const handleDown = (e: KeyboardEvent) => {
+      keysRef.current[e.key] = true;
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
+        e.preventDefault();
+      }
+      sendInput();
+    };
+    const handleUp = (e: KeyboardEvent) => {
+      keysRef.current[e.key] = false;
+      sendInput();
+    };
+
+    window.addEventListener("keydown", handleDown);
+    window.addEventListener("keyup", handleUp);
 
     const inputInterval = setInterval(sendInput, 1000 / 60);
 
@@ -447,13 +493,32 @@ export default function OnlineGame() {
       const now = performance.now();
       const dtMs = lastRenderAtRef.current > 0 ? Math.min(50, now - lastRenderAtRef.current) : 16;
       lastRenderAtRef.current = now;
+
+      const input = currentInput(keysRef.current);
+      if (input.up && !lastJumpHeldRef.current) {
+        jumpBufferMsRef.current = 120;
+      } else if (!input.up) {
+        jumpBufferMsRef.current = 0;
+      }
+      lastJumpHeldRef.current = input.up;
+
+      if (jumpBufferMsRef.current > 0) {
+        jumpBufferMsRef.current = Math.max(0, jumpBufferMsRef.current - dtMs);
+      }
+      const canJump = jumpBufferMsRef.current > 0;
+      const onJumpConsumed = () => {
+        jumpBufferMsRef.current = 0;
+      };
+
       const rawPlayerList = extractPlayers(state.players);
       const playerList = smoothOnlinePlayers(
         rawPlayerList,
         smoothedPlayersRef.current,
         dtMs,
         room.sessionId,
-        currentInput(keysRef.current),
+        input,
+        canJump,
+        onJumpConsumed,
         map
       );
       const renderState = {

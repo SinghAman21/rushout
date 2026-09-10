@@ -112,14 +112,25 @@ function hasLineOfSight(
   return true;
 }
 
-function isGrounded(player: PlayerSchema, map: GameMap): boolean {
-  const playerH = PLAYER_SIZE * 2;
-  return player.y >= map.height - playerH - 0.5 || collidesWithObstacles(player.x, player.y + 2, map.obstacles);
-}
-
 function horizontallyOverlaps(x: number, obstacle: any): boolean {
   const playerW = PLAYER_SIZE * 2;
   return x + playerW > obstacle.x && x < obstacle.x + obstacle.w;
+}
+
+function isGrounded(player: { x: number; y: number; vy: number }, map: GameMap): boolean {
+  if (player.vy < -0.1) return false;
+  const playerH = PLAYER_SIZE * 2;
+  const bottom = player.y + playerH;
+  if (bottom >= map.height - 0.5) return true;
+
+  for (const o of map.obstacles) {
+    if (horizontallyOverlaps(player.x, o)) {
+      if (bottom >= o.y - 1 && bottom <= o.y + 3 && player.y < o.y) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function moveVertically(player: PlayerSchema, newY: number, map: GameMap) {
@@ -217,6 +228,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   private powerUpInterval: ReturnType<typeof setInterval> | null = null;
   private lastTick = Date.now();
   private playerInputs: Map<string, InputState> = new Map();
+  private lastUpInputs: Map<string, boolean> = new Map();
+  private jumpBuffer: Map<string, number> = new Map();
   private tagLocked = false;
   private hostId: string | null = null;
   private hostKey: string | null = null;
@@ -246,7 +259,15 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.setPatchRate(1000 / NETWORK_PATCH_RATE);
 
     this.onMessage("input", (client: Client, data: InputState | number) => {
-      this.playerInputs.set(client.sessionId, decodeInput(data));
+      const input = decodeInput(data);
+      const wasUp = this.lastUpInputs.get(client.sessionId) ?? false;
+      if (input.up && !wasUp) {
+        this.jumpBuffer.set(client.sessionId, 120);
+      } else if (!input.up) {
+        this.jumpBuffer.set(client.sessionId, 0);
+      }
+      this.lastUpInputs.set(client.sessionId, input.up);
+      this.playerInputs.set(client.sessionId, input);
     });
 
     this.onMessage("startGame", (client: Client) => {
@@ -326,6 +347,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   onLeave(client: Client) {
     this.s.players.delete(client.sessionId);
     this.playerInputs.delete(client.sessionId);
+    this.lastUpInputs.delete(client.sessionId);
+    this.jumpBuffer.delete(client.sessionId);
 
     if (this.s.players.size === 0) {
       this.disconnect();
@@ -418,6 +441,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.s.gameStarted = true;
     this.s.roundTimeRemaining = this.config.roundLength;
     this.tagLocked = false;
+    this.jumpBuffer.clear();
+    this.lastUpInputs.clear();
 
     const players = playerList(this.s);
     const initialItId = this.hostId ?? players[0]?.id ?? "";
@@ -461,7 +486,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     if (!this.s.gameStarted) return;
 
     const now = Date.now();
-    const dt = now - this.lastTick;
+    const rawDt = now - this.lastTick;
+    const dt = Math.min(50, Math.max(1, rawDt));
     this.lastTick = now;
 
     this.s.roundTimeRemaining -= dt / 1000;
@@ -515,6 +541,13 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       const input = this.playerInputs.get(sessionId);
       if (!input) return;
 
+      let bufferRemaining = this.jumpBuffer.get(sessionId) ?? 0;
+      if (bufferRemaining > 0) {
+        bufferRemaining = Math.max(0, bufferRemaining - dt);
+        this.jumpBuffer.set(sessionId, bufferRemaining);
+      }
+      const canJump = (this.jumpBuffer.get(sessionId) ?? 0) > 0;
+
       const isFrozen = player.activePowerUpType === POWER_UP_TYPE_INDEX.freeze_pulse;
 
       let speed = PLAYER_MOVE_SPEED;
@@ -537,8 +570,9 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
           player.facingX = Math.sign(dx);
           player.facingY = 0;
         }
-        if (input.up && isGrounded(player, this.map)) {
+        if (canJump && isGrounded(player, this.map)) {
           player.vy = -PLAYER_JUMP_SPEED;
+          this.jumpBuffer.set(sessionId, 0);
         }
       }
 
@@ -730,6 +764,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   endRound() {
     this.s.gameStarted = false;
     this.tagLocked = false;
+    this.jumpBuffer.clear();
+    this.lastUpInputs.clear();
 
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
@@ -757,6 +793,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   }
 
   onDispose() {
+    this.jumpBuffer.clear();
+    this.lastUpInputs.clear();
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
       this.tickInterval = null;
