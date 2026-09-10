@@ -49,6 +49,8 @@ export function extractPlayers(playersData: any): PlayerState[] {
         heldPowerUp: p.heldPowerUp !== undefined && p.heldPowerUp >= 0
           ? POWER_UP_INDEX_TO_TYPE[p.heldPowerUp]
           : (p.heldPowerUp ?? null),
+        lastSeq: p.lastProcessedTick ?? p.lastSeq ?? 0,
+        lastProcessedTick: p.lastProcessedTick ?? p.lastSeq ?? 0,
       });
     });
   }

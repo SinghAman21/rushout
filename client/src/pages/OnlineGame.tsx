@@ -135,133 +135,99 @@ function movePredictedVertically(player: PlayerState, newY: number, map: GameMap
   }
 }
 
-function predictLocalPlayer(
-  serverPlayer: PlayerState,
-  previousPlayer: PlayerState,
+const FIXED_DT = 1000 / 60; // 16.666667 ms
+
+interface TickHistoryEntry {
+  tick: number;
+  input: OnlineInput;
+  canJump: boolean;
+}
+
+function stepPlayerPhysics(
+  player: PlayerState,
   input: OnlineInput,
   canJump: boolean,
-  onJumpConsumed: () => void,
-  map: GameMap,
-  dtMs: number
-) {
-  const predicted: PlayerState = {
-    ...serverPlayer,
-    x: previousPlayer.x,
-    y: previousPlayer.y,
-    vx: previousPlayer.vx,
-    vy: previousPlayer.vy,
-    facing: { ...serverPlayer.facing },
+  map: GameMap
+): { player: PlayerState; jumpConsumed: boolean } {
+  const p: PlayerState = {
+    ...player,
+    facing: { ...player.facing },
   };
 
-  const frameScale = dtMs / (1000 / 60);
-  const isFrozen = serverPlayer.activePowerUp?.type === "freeze_pulse";
+  const isFrozen = p.activePowerUp?.type === "freeze_pulse";
   let speed = PLAYER_MOVE_SPEED;
-  if (serverPlayer.activePowerUp?.type === "speed_surge") {
+  if (p.activePowerUp?.type === "speed_surge") {
     speed *= SPEED_SURGE_MULTIPLIER;
   }
 
   let dx = 0;
+  let jumpConsumed = false;
   if (!isFrozen) {
-    if (input.left) dx -= speed * frameScale;
-    if (input.right) dx += speed * frameScale;
-    if (dx !== 0) predicted.facing = { x: Math.sign(dx), y: 0 };
-    if (canJump && isGrounded(predicted, map)) {
-      predicted.vy = -PLAYER_JUMP_SPEED;
-      onJumpConsumed();
+    if (input.left) dx -= speed;
+    if (input.right) dx += speed;
+    if (dx !== 0) p.facing = { x: Math.sign(dx), y: 0 };
+    if (canJump && isGrounded(p, map)) {
+      p.vy = -PLAYER_JUMP_SPEED;
+      jumpConsumed = true;
     }
   }
 
-  predicted.vx = dx;
-  predicted.vy = Math.min(MAX_FALL_SPEED, predicted.vy + GRAVITY * frameScale);
+  p.vx = dx;
+  p.vy = Math.min(MAX_FALL_SPEED, p.vy + GRAVITY);
 
-  const newX = predicted.x + predicted.vx;
-  if (!collidesWithObstacles(newX, predicted.y, map.obstacles)) {
-    predicted.x = newX;
+  const newX = p.x + p.vx;
+  if (!collidesWithObstacles(newX, p.y, map.obstacles)) {
+    p.x = newX;
   } else {
-    predicted.vx = 0;
+    p.vx = 0;
   }
 
-  movePredictedVertically(predicted, predicted.y + predicted.vy * frameScale, map);
+  movePredictedVertically(p, p.y + p.vy, map);
 
-  predicted.x = Math.max(0, Math.min(map.width - PLAYER_SIZE * 2, predicted.x));
-  predicted.y = Math.max(0, Math.min(map.height - PLAYER_SIZE * 2, predicted.y));
-  if (predicted.y >= map.height - PLAYER_SIZE * 2) predicted.vy = 0;
+  p.x = Math.max(0, Math.min(map.width - PLAYER_SIZE * 2, p.x));
+  p.y = Math.max(0, Math.min(map.height - PLAYER_SIZE * 2, p.y));
+  if (p.y >= map.height - PLAYER_SIZE * 2) p.vy = 0;
 
-  const errorX = serverPlayer.x - predicted.x;
-  const errorY = serverPlayer.y - predicted.y;
-  const error = Math.hypot(errorX, errorY);
-
-  if (error > 48) {
-    predicted.x = serverPlayer.x;
-    predicted.y = serverPlayer.y;
-    predicted.vx = serverPlayer.vx;
-    predicted.vy = serverPlayer.vy;
-  } else {
-    if (Math.abs(errorX) > 0.5) {
-      const nextX = predicted.x + errorX * 0.1;
-      if (!collidesWithObstacles(nextX, predicted.y, map.obstacles)) {
-        predicted.x = nextX;
-      }
-    }
-
-    if (isGrounded(serverPlayer, map)) {
-      if (Math.abs(errorY) > 0.5) {
-        predicted.y += errorY * 0.2;
-      }
-      if (predicted.vy > 0) {
-        predicted.vy = 0;
-      }
-    } else {
-      if (Math.abs(errorY) > 1) {
-        predicted.y += errorY * 0.05;
-      }
-      predicted.vy += (serverPlayer.vy - predicted.vy) * 0.1;
-    }
-  }
-
-  return predicted;
+  return { player: p, jumpConsumed };
 }
 
-function smoothOnlinePlayers(
-  rawPlayers: PlayerState[],
-  previousPlayers: Map<string, PlayerState>,
+function smoothRemotePlayer(
+  player: PlayerState,
+  previous: PlayerState,
   dtMs: number,
-  localPlayerId: string | undefined,
-  input: OnlineInput,
-  canJump: boolean,
-  onJumpConsumed: () => void,
   map: GameMap
-) {
-  const nextPlayers = new Map<string, PlayerState>();
-  const smoothedPlayers = rawPlayers.map(player => {
-    const previous = previousPlayers.get(player.id);
-    if (!previous) {
-      const fresh = { ...player, facing: { ...player.facing } };
-      nextPlayers.set(player.id, fresh);
-      return fresh;
+): PlayerState {
+  const dx = player.x - previous.x;
+  const dy = player.y - previous.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance > 180) {
+    return { ...player, facing: { ...player.facing } };
+  }
+
+  const blendRate = distance > 60 ? 45 : 65;
+  const alpha = 1 - Math.exp(-dtMs / blendRate);
+
+  let targetX = previous.x + dx * alpha;
+  let targetY = previous.y + dy * alpha;
+
+  if (collidesWithObstacles(targetX, targetY, map.obstacles)) {
+    if (!collidesWithObstacles(targetX, previous.y, map.obstacles)) {
+      targetY = previous.y;
+    } else if (!collidesWithObstacles(previous.x, targetY, map.obstacles)) {
+      targetX = previous.x;
+    } else {
+      targetX = collidesWithObstacles(player.x, player.y, map.obstacles) ? previous.x : player.x;
+      targetY = collidesWithObstacles(player.x, player.y, map.obstacles) ? previous.y : player.y;
     }
+  }
 
-    const smoothed = player.id === localPlayerId
-      ? predictLocalPlayer(player, previous, input, canJump, onJumpConsumed, map, dtMs)
-      : (() => {
-        const dx = player.x - previous.x;
-        const dy = player.y - previous.y;
-        const distance = Math.hypot(dx, dy);
-        const alpha = distance > 180 ? 1 : 1 - Math.exp(-dtMs / 75);
-        return {
-          ...player,
-          x: previous.x + dx * alpha,
-          y: previous.y + dy * alpha,
-          facing: { ...player.facing },
-        };
-      })();
-    nextPlayers.set(player.id, smoothed);
-    return smoothed;
-  });
-
-  previousPlayers.clear();
-  nextPlayers.forEach((player, id) => previousPlayers.set(id, player));
-  return smoothedPlayers;
+  return {
+    ...player,
+    x: targetX,
+    y: targetY,
+    facing: { ...player.facing },
+  };
 }
 
 export default function OnlineGame() {
@@ -296,15 +262,23 @@ export default function OnlineGame() {
   const gameFrameRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const keysRef = useRef<Record<string, boolean>>({});
-  const lastInputRef = useRef<number>(-1);
-  const lastInputSentAtRef = useRef(0);
   const rafRef = useRef<number>(0);
-  const lastRenderAtRef = useRef(0);
   const smoothedPlayersRef = useRef<Map<string, PlayerState>>(new Map());
   const connectedRef = useRef(false);
   const eventsRef = useRef<any[]>([]);
   const lastJumpHeldRef = useRef(false);
   const jumpBufferMsRef = useRef(0);
+  const clientTickRef = useRef(0);
+  const tickHistoryRef = useRef<TickHistoryEntry[]>([]);
+  const accumulatorRef = useRef(0);
+  const lastFrameTimeRef = useRef(0);
+  const lastServerTickRef = useRef(0);
+  const lastAckedClientTickRef = useRef(0);
+  const predictedStateRef = useRef<PlayerState | null>(null);
+  const visualOffsetRef = useRef({ x: 0, y: 0 });
+  const lastSentMaskRef = useRef(-1);
+  const lastSentAtRef = useRef(0);
+  const inputChangedRef = useRef(false);
 
   useEffect(() => {
     const connect = async () => {
@@ -379,6 +353,12 @@ export default function OnlineGame() {
           if (data.roomCode) setActualRoomId(String(data.roomCode).toUpperCase().replace(/[^A-Z0-9]/g, ""));
         });
         room.onMessage("gameFrame", (frame: any) => {
+          if (frame.serverTick && lastServerTickRef.current && frame.serverTick <= lastServerTickRef.current) {
+            return; // Discard stale/out-of-order frame
+          }
+          if (frame.serverTick) {
+            lastServerTickRef.current = frame.serverTick;
+          }
           gameFrameRef.current = frame;
           if (frame.hostId) setServerHostId(frame.hostId);
           if (frame.roomCode) setActualRoomId(String(frame.roomCode).toUpperCase().replace(/[^A-Z0-9]/g, ""));
@@ -389,9 +369,20 @@ export default function OnlineGame() {
           setRoundResult(null);
           setHudTimeLeft(roundLength);
           smoothedPlayersRef.current.clear();
-          lastRenderAtRef.current = 0;
+          lastFrameTimeRef.current = 0;
+          accumulatorRef.current = 0;
+          clientTickRef.current = 0;
+          tickHistoryRef.current = [];
+          lastServerTickRef.current = 0;
+          lastAckedClientTickRef.current = 0;
           lastJumpHeldRef.current = false;
           jumpBufferMsRef.current = 0;
+          predictedStateRef.current = null;
+          visualOffsetRef.current = { x: 0, y: 0 };
+          lastSentMaskRef.current = -1;
+          lastSentAtRef.current = 0;
+          gameFrameRef.current = null;
+          inputChangedRef.current = false;
           setStatus("playing");
         });
 
@@ -434,16 +425,20 @@ export default function OnlineGame() {
   useEffect(() => {
     if (status !== "playing") return;
 
-    const sendInput = () => {
+    const transmitInput = (force = false) => {
       const room = roomRef.current;
       if (!room) return;
       const input = currentInput(keysRef.current);
       const mask = inputMask(input);
       const now = performance.now();
-      if (mask !== lastInputRef.current || now - lastInputSentAtRef.current > 100) {
-        room.send("input", mask);
-        lastInputRef.current = mask;
-        lastInputSentAtRef.current = now;
+      if (force || mask !== lastSentMaskRef.current || now - lastSentAtRef.current >= 33) {
+        room.send("input", {
+          clientTick: clientTickRef.current,
+          mask,
+          jump: jumpBufferMsRef.current > 0,
+        });
+        lastSentMaskRef.current = mask;
+        lastSentAtRef.current = now;
       }
     };
 
@@ -452,17 +447,20 @@ export default function OnlineGame() {
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
         e.preventDefault();
       }
-      sendInput();
+      if (["w", "ArrowUp", "W", " ", "Spacebar", "8"].includes(e.key) && !lastJumpHeldRef.current) {
+        jumpBufferMsRef.current = 120;
+      }
+      inputChangedRef.current = true;
     };
     const handleUp = (e: KeyboardEvent) => {
       keysRef.current[e.key] = false;
-      sendInput();
+      inputChangedRef.current = true;
     };
 
     window.addEventListener("keydown", handleDown);
     window.addEventListener("keyup", handleUp);
 
-    const inputInterval = setInterval(sendInput, 1000 / 60);
+    const inputInterval = setInterval(() => transmitInput(false), 33);
 
     const gameLoop = () => {
       const canvas = canvasRef.current;
@@ -482,45 +480,146 @@ export default function OnlineGame() {
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      const now = performance.now();
+      if (lastFrameTimeRef.current === 0) {
+        lastFrameTimeRef.current = now;
+      }
+      const frameDelta = Math.min(100, now - lastFrameTimeRef.current);
+      lastFrameTimeRef.current = now;
+
       // Decay online events
       eventsRef.current = eventsRef.current.filter(e => {
-        e.remainingMs -= 16;
+        e.remainingMs -= frameDelta;
         return e.remainingMs > 0;
       });
       const nextHudTime = Math.max(0, Math.ceil(state.roundTimeRemaining ?? 0));
       setHudTimeLeft(current => current === nextHudTime ? current : nextHudTime);
 
-      const now = performance.now();
-      const dtMs = lastRenderAtRef.current > 0 ? Math.min(50, now - lastRenderAtRef.current) : 16;
-      lastRenderAtRef.current = now;
-
-      const input = currentInput(keysRef.current);
-      if (input.up && !lastJumpHeldRef.current) {
+      // Check jump input edge
+      const currentKeys = currentInput(keysRef.current);
+      if (currentKeys.up && !lastJumpHeldRef.current) {
         jumpBufferMsRef.current = 120;
-      } else if (!input.up) {
+      } else if (!currentKeys.up && jumpBufferMsRef.current <= 0) {
         jumpBufferMsRef.current = 0;
       }
-      lastJumpHeldRef.current = input.up;
+      lastJumpHeldRef.current = currentKeys.up;
 
-      if (jumpBufferMsRef.current > 0) {
-        jumpBufferMsRef.current = Math.max(0, jumpBufferMsRef.current - dtMs);
-      }
-      const canJump = jumpBufferMsRef.current > 0;
-      const onJumpConsumed = () => {
-        jumpBufferMsRef.current = 0;
-      };
-
+      // 1. RECONCILIATION: Check authoritative server state
       const rawPlayerList = extractPlayers(state.players);
-      const playerList = smoothOnlinePlayers(
-        rawPlayerList,
-        smoothedPlayersRef.current,
-        dtMs,
-        room.sessionId,
-        input,
-        canJump,
-        onJumpConsumed,
-        map
-      );
+      const serverLocal = rawPlayerList.find(p => p.id === room.sessionId);
+
+      if (serverLocal) {
+        const ackTick = serverLocal.lastProcessedTick ?? serverLocal.lastSeq ?? 0;
+
+        if (predictedStateRef.current === null) {
+          // Initialize predicted state on first packet/spawn
+          predictedStateRef.current = { ...serverLocal, facing: { ...serverLocal.facing } };
+          lastAckedClientTickRef.current = ackTick;
+          visualOffsetRef.current = { x: 0, y: 0 };
+        } else if (ackTick > lastAckedClientTickRef.current) {
+          lastAckedClientTickRef.current = ackTick;
+
+          // Prune client tick history up to acknowledged tick
+          tickHistoryRef.current = tickHistoryRef.current.filter(entry => entry.tick > ackTick);
+
+          // Replay ONLY the unacknowledged client simulation ticks from server authoritative state
+          let replayed: PlayerState = {
+            ...serverLocal,
+            facing: { ...serverLocal.facing },
+          };
+
+          for (const entry of tickHistoryRef.current) {
+            const res = stepPlayerPhysics(replayed, entry.input, entry.canJump, map);
+            replayed = res.player;
+          }
+
+          // Absorb divergence into visual offset
+          const errX = predictedStateRef.current.x - replayed.x;
+          const errY = predictedStateRef.current.y - replayed.y;
+          const errDist = Math.hypot(errX, errY);
+
+          if (errDist > 120) {
+            // Major disparity (teleport, respawn, blink dash warp)
+            visualOffsetRef.current = { x: 0, y: 0 };
+          } else {
+            visualOffsetRef.current.x += errX;
+            visualOffsetRef.current.y += errY;
+            visualOffsetRef.current.x = Math.max(-40, Math.min(40, visualOffsetRef.current.x));
+            visualOffsetRef.current.y = Math.max(-40, Math.min(40, visualOffsetRef.current.y));
+          }
+
+          predictedStateRef.current = replayed;
+        }
+      }
+
+      // 2. FIXED TIMESTEP SIMULATION ACCUMULATOR
+      accumulatorRef.current += frameDelta;
+      while (accumulatorRef.current >= FIXED_DT) {
+        accumulatorRef.current -= FIXED_DT;
+
+        const input = currentInput(keysRef.current);
+        if (jumpBufferMsRef.current > 0) {
+          jumpBufferMsRef.current = Math.max(0, jumpBufferMsRef.current - FIXED_DT);
+        }
+        const canJump = jumpBufferMsRef.current > 0;
+
+        const tick = ++clientTickRef.current;
+        tickHistoryRef.current.push({ tick, input, canJump });
+        if (tickHistoryRef.current.length > 180) {
+          tickHistoryRef.current.shift();
+        }
+
+        if (predictedStateRef.current) {
+          const res = stepPlayerPhysics(predictedStateRef.current, input, canJump, map);
+          predictedStateRef.current = res.player;
+          if (res.jumpConsumed) {
+            jumpBufferMsRef.current = 0;
+          }
+        }
+      }
+
+      // 3. INPUT TRANSMISSION
+      const forceTransmit = inputChangedRef.current;
+      inputChangedRef.current = false;
+      transmitInput(forceTransmit);
+
+      // 4. DECAY VISUAL OFFSET SMOOTHLY
+      const decay = Math.exp(-frameDelta / 40);
+      visualOffsetRef.current.x *= decay;
+      visualOffsetRef.current.y *= decay;
+      if (Math.abs(visualOffsetRef.current.x) < 0.05) visualOffsetRef.current.x = 0;
+      if (Math.abs(visualOffsetRef.current.y) < 0.05) visualOffsetRef.current.y = 0;
+
+      // 5. ASSEMBLE PLAYERS FOR RENDERING
+      const playerList: PlayerState[] = [];
+      for (const player of rawPlayerList) {
+        if (player.id === room.sessionId) {
+          if (predictedStateRef.current) {
+            playerList.push({
+              ...predictedStateRef.current,
+              // Authoritative attributes from server
+              isIt: player.isIt,
+              score: player.score,
+              alive: player.alive,
+              color: player.color,
+              name: player.name,
+              activePowerUp: player.activePowerUp,
+              powerUpCooldown: player.powerUpCooldown,
+              heldPowerUp: player.heldPowerUp,
+              x: Math.max(0, Math.min(map.width - PLAYER_SIZE * 2, predictedStateRef.current.x + visualOffsetRef.current.x)),
+              y: Math.max(0, Math.min(map.height - PLAYER_SIZE * 2, predictedStateRef.current.y + visualOffsetRef.current.y)),
+            });
+          } else {
+            playerList.push(player);
+          }
+        } else {
+          const prev = smoothedPlayersRef.current.get(player.id);
+          const smoothed = prev ? smoothRemotePlayer(player, prev, frameDelta, map) : player;
+          smoothedPlayersRef.current.set(player.id, smoothed);
+          playerList.push(smoothed);
+        }
+      }
+
       const renderState = {
         players: playerList,
         spawns: state.spawns,

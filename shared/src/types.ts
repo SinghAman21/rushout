@@ -19,6 +19,8 @@ export interface PlayerState {
   activePowerUp: ActivePowerUp | null;
   powerUpCooldown: number;
   heldPowerUp: PowerUpType | null;
+  lastSeq?: number;
+  lastProcessedTick?: number;
 }
 
 export interface ActivePowerUp {

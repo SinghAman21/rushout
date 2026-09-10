@@ -172,20 +172,49 @@ interface InputState {
   right: boolean;
 }
 
-function decodeInput(data: InputState | number): InputState {
+interface InputData {
+  clientTick?: number;
+  seq?: number;
+  mask?: number;
+  up?: boolean;
+  left?: boolean;
+  right?: boolean;
+  down?: boolean;
+  jump?: boolean;
+}
+
+function decodeInput(data: InputData | number): { state: InputState; clientTick: number; jump: boolean } {
+  let mask = 0;
+  let clientTick = 0;
+  let jump = false;
   if (typeof data === "number") {
-    return {
-      up: (data & 1) !== 0,
-      down: (data & 2) !== 0,
-      left: (data & 4) !== 0,
-      right: (data & 8) !== 0,
-    };
+    mask = data;
+  } else if (data && typeof data === "object") {
+    if (typeof data.mask === "number") {
+      mask = data.mask;
+    } else {
+      if (data.up) mask |= 1;
+      if (data.down) mask |= 2;
+      if (data.left) mask |= 4;
+      if (data.right) mask |= 8;
+    }
+    if (typeof data.clientTick === "number") {
+      clientTick = data.clientTick;
+    } else if (typeof data.seq === "number") {
+      clientTick = data.seq;
+    }
+    jump = !!data.jump;
   }
+
   return {
-    up: !!data?.up,
-    down: !!data?.down,
-    left: !!data?.left,
-    right: !!data?.right,
+    state: {
+      up: (mask & 1) !== 0,
+      down: (mask & 2) !== 0,
+      left: (mask & 4) !== 0,
+      right: (mask & 8) !== 0,
+    },
+    clientTick,
+    jump,
   };
 }
 
@@ -195,7 +224,7 @@ function playerList(state: TagRoomStateSchema): PlayerSchema[] {
   return out;
 }
 
-function serializePlayers(state: TagRoomStateSchema) {
+function serializePlayers(state: TagRoomStateSchema, lastProcessedTicks?: Map<string, number>) {
   return playerList(state).map(p => ({
     id: p.id,
     name: p.name,
@@ -203,6 +232,8 @@ function serializePlayers(state: TagRoomStateSchema) {
     y: p.y,
     vx: p.vx,
     vy: p.vy,
+    lastProcessedTick: lastProcessedTicks?.get(p.id) ?? 0,
+    lastSeq: lastProcessedTicks?.get(p.id) ?? 0,
     isIt: p.isIt,
     alive: p.alive,
     facingX: p.facingX,
@@ -224,10 +255,15 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     return this.state as TagRoomStateSchema;
   }
 
+  private serverTick = 0;
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private powerUpInterval: ReturnType<typeof setInterval> | null = null;
   private lastTick = Date.now();
+  private lastFrameBroadcast = 0;
   private playerInputs: Map<string, InputState> = new Map();
+  private playerPendingInputs: Map<string, Array<{ clientTick: number; state: InputState; jump: boolean }>> = new Map();
+  private playerLastClientTick: Map<string, number> = new Map();
+  private playerLastProcessedTick: Map<string, number> = new Map();
   private lastUpInputs: Map<string, boolean> = new Map();
   private jumpBuffer: Map<string, number> = new Map();
   private tagLocked = false;
@@ -258,16 +294,45 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.setState(state);
     this.setPatchRate(1000 / NETWORK_PATCH_RATE);
 
-    this.onMessage("input", (client: Client, data: InputState | number) => {
-      const input = decodeInput(data);
-      const wasUp = this.lastUpInputs.get(client.sessionId) ?? false;
-      if (input.up && !wasUp) {
-        this.jumpBuffer.set(client.sessionId, 120);
-      } else if (!input.up) {
-        this.jumpBuffer.set(client.sessionId, 0);
+    this.onMessage("input", (client: Client, data: InputData | number) => {
+      const { state: input, clientTick, jump: explicitJump } = decodeInput(data);
+      const prevClientTick = this.playerLastClientTick.get(client.sessionId) ?? 0;
+
+      // Ignore stale out-of-order packets
+      if (clientTick > 0 && clientTick <= prevClientTick) {
+        return;
       }
+
+      if (clientTick > 0) {
+        this.playerLastClientTick.set(client.sessionId, clientTick);
+      }
+
+      const wasUp = this.lastUpInputs.get(client.sessionId) ?? false;
+      const isJump = (input.up && !wasUp) || explicitJump;
       this.lastUpInputs.set(client.sessionId, input.up);
-      this.playerInputs.set(client.sessionId, input);
+
+      const queue = this.playerPendingInputs.get(client.sessionId) ?? [];
+      const last = queue[queue.length - 1];
+
+      // If incoming packet has identical input state and neither has jump, update clientTick
+      if (
+        last &&
+        last.state.up === input.up &&
+        last.state.down === input.down &&
+        last.state.left === input.left &&
+        last.state.right === input.right &&
+        !last.jump &&
+        !isJump
+      ) {
+        last.clientTick = clientTick;
+      } else {
+        queue.push({ clientTick, state: input, jump: isJump });
+        if (queue.length > 5) {
+          queue.shift();
+        }
+      }
+
+      this.playerPendingInputs.set(client.sessionId, queue);
     });
 
     this.onMessage("startGame", (client: Client) => {
@@ -347,8 +412,11 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   onLeave(client: Client) {
     this.s.players.delete(client.sessionId);
     this.playerInputs.delete(client.sessionId);
+    this.playerPendingInputs.delete(client.sessionId);
     this.lastUpInputs.delete(client.sessionId);
     this.jumpBuffer.delete(client.sessionId);
+    this.playerLastClientTick.delete(client.sessionId);
+    this.playerLastProcessedTick.delete(client.sessionId);
 
     if (this.s.players.size === 0) {
       this.disconnect();
@@ -375,8 +443,9 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
 
   private sendLobbyState(client?: Client) {
     const payload = {
+      serverTick: this.serverTick,
       hostId: this.hostId ?? "",
-      players: serializePlayers(this.s),
+      players: serializePlayers(this.s, this.playerLastProcessedTick),
       count: this.s.players.size,
       maxClients: this.maxClients,
       roomCode: this.metadata?.roomCode ?? "",
@@ -392,6 +461,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
 
   private sendGameFrame() {
     this.broadcast("gameFrame", {
+      serverTick: this.serverTick,
       hostId: this.hostId ?? "",
       roomCode: this.metadata?.roomCode ?? "",
       gameStarted: this.s.gameStarted,
@@ -399,7 +469,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       roundLength: this.s.roundLength,
       mapName: this.s.mapName,
       powerUpsEnabled: this.s.powerUpsEnabled,
-      players: serializePlayers(this.s),
+      players: serializePlayers(this.s, this.playerLastProcessedTick),
       spawns: (() => {
         const out: Array<{ id: string; type: number; x: number; y: number; respawnTimer: number }> = [];
         this.s.spawns.forEach(s => out.push({
@@ -438,11 +508,16 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   }
 
   startGame() {
+    this.serverTick = 0;
+    this.lastFrameBroadcast = 0;
     this.s.gameStarted = true;
     this.s.roundTimeRemaining = this.config.roundLength;
     this.tagLocked = false;
     this.jumpBuffer.clear();
     this.lastUpInputs.clear();
+    this.playerLastClientTick.clear();
+    this.playerLastProcessedTick.clear();
+    this.playerPendingInputs.clear();
 
     const players = playerList(this.s);
     const initialItId = this.hostId ?? players[0]?.id ?? "";
@@ -485,12 +560,12 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   gameTick() {
     if (!this.s.gameStarted) return;
 
+    this.serverTick++;
     const now = Date.now();
-    const rawDt = now - this.lastTick;
-    const dt = Math.min(50, Math.max(1, rawDt));
     this.lastTick = now;
+    const dt = 1000 / SERVER_TICK_RATE;
 
-    this.s.roundTimeRemaining -= dt / 1000;
+    this.s.roundTimeRemaining -= 1 / SERVER_TICK_RATE;
     if (this.s.roundTimeRemaining <= 0) {
       this.s.roundTimeRemaining = 0;
       this.endRound();
@@ -538,8 +613,19 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
         if (player.powerUpCooldown < 0) player.powerUpCooldown = 0;
       }
 
-      const input = this.playerInputs.get(sessionId);
-      if (!input) return;
+      const pending = this.playerPendingInputs.get(sessionId);
+      if (pending && pending.length > 0) {
+        const next = pending.shift()!;
+        this.playerInputs.set(sessionId, next.state);
+        if (next.clientTick > 0) {
+          this.playerLastProcessedTick.set(sessionId, next.clientTick);
+        }
+        if (next.jump) {
+          this.jumpBuffer.set(sessionId, 120);
+        }
+      }
+
+      const input = this.playerInputs.get(sessionId) ?? { up: false, down: false, left: false, right: false };
 
       let bufferRemaining = this.jumpBuffer.get(sessionId) ?? 0;
       if (bufferRemaining > 0) {
@@ -561,11 +647,10 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
         }
       });
 
-      const frameScale = dt / (1000 / 60);
       let dx = 0;
       if (!isFrozen) {
-        if (input.left) dx -= speed * frameScale;
-        if (input.right) dx += speed * frameScale;
+        if (input.left) dx -= speed;
+        if (input.right) dx += speed;
         if (dx !== 0) {
           player.facingX = Math.sign(dx);
           player.facingY = 0;
@@ -577,7 +662,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       }
 
       player.vx = dx;
-      player.vy = Math.min(MAX_FALL_SPEED, player.vy + GRAVITY * frameScale);
+      player.vy = Math.min(MAX_FALL_SPEED, player.vy + GRAVITY);
 
       const newX = player.x + player.vx;
       if (!collidesWithObstacles(newX, player.y, this.map.obstacles)) {
@@ -586,7 +671,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
         player.vx = 0;
       }
 
-      const newY = player.y + player.vy * frameScale;
+      const newY = player.y + player.vy;
       moveVertically(player, newY, this.map);
 
       player.x = Math.max(0, Math.min(this.map.width - PLAYER_SIZE * 2, player.x));
@@ -666,7 +751,11 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       }
     }
 
-    this.sendGameFrame();
+    const FRAME_BROADCAST_INTERVAL = 1000 / 30; // 30 Hz = 33.3ms
+    if (now - this.lastFrameBroadcast >= FRAME_BROADCAST_INTERVAL) {
+      this.lastFrameBroadcast = now;
+      this.sendGameFrame();
+    }
   }
 
   activatePowerUp(player: PlayerSchema, type: PowerUpType) {
@@ -766,6 +855,9 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.tagLocked = false;
     this.jumpBuffer.clear();
     this.lastUpInputs.clear();
+    this.playerLastClientTick.clear();
+    this.playerLastProcessedTick.clear();
+    this.playerPendingInputs.clear();
 
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
@@ -795,6 +887,9 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   onDispose() {
     this.jumpBuffer.clear();
     this.lastUpInputs.clear();
+    this.playerLastClientTick.clear();
+    this.playerLastProcessedTick.clear();
+    this.playerPendingInputs.clear();
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
       this.tickInterval = null;
