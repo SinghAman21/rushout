@@ -496,17 +496,15 @@ export default function OnlineGame() {
       const nextHudTime = Math.max(0, Math.ceil(state.roundTimeRemaining ?? 0));
       setHudTimeLeft(current => current === nextHudTime ? current : nextHudTime);
 
-      const now = performance.now();
-      const dtMs = lastRenderAtRef.current > 0 ? Math.min(50, now - lastRenderAtRef.current) : 16;
-      lastRenderAtRef.current = now;
-
-      const input = status === "playing" ? currentInput(keysRef.current) : { up: false, down: false, left: false, right: false };
+      const input = status === "playing"
+        ? currentInput(keysRef.current)
+        : { up: false, left: false, right: false };
       if (input.up && !lastJumpHeldRef.current) {
         jumpBufferMsRef.current = 120;
-      } else if (!currentKeys.up && jumpBufferMsRef.current <= 0) {
+      } else if (!input.up && jumpBufferMsRef.current <= 0) {
         jumpBufferMsRef.current = 0;
       }
-      lastJumpHeldRef.current = currentKeys.up;
+      lastJumpHeldRef.current = input.up;
 
       // 1. RECONCILIATION: Check authoritative server state
       const rawPlayerList = extractPlayers(state.players);
