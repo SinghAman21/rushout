@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { PLAYER_COLORS } from "chase-tag-shared";
+import { PLAYER_COLORS } from "rushout-shared";
 import ArcadeButton from "../components/ArcadeButton.js";
 
 interface LobbyPlayer {

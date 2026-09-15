@@ -1,5 +1,5 @@
 {
-  "name": "chase-tag-shared",
+  "name": "rushout-shared",
   "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",

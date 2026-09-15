@@ -10,7 +10,7 @@
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
     "paths": {
-      "chase-tag-shared": ["../shared/src/index.ts"]
+      "rushout-shared": ["../shared/src/index.ts"]
     },
     "experimentalDecorators": true,
     "skipLibCheck": true,

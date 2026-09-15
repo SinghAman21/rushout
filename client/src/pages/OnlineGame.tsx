@@ -13,7 +13,7 @@ import {
   PLAYER_SIZE,
   POWER_UP_INDEX_TO_TYPE,
   SPEED_SURGE_MULTIPLIER,
-} from "chase-tag-shared";
+} from "rushout-shared";
 import { renderGame, renderHUD, extractPlayers } from "../game/renderer.js";
 import ArcadeButton from "../components/ArcadeButton.js";
 
@@ -390,7 +390,7 @@ export default function OnlineGame() {
           eventsRef.current.push({
             id: `ev_${Date.now()}`,
             type: "tag",
-            text: "👑 TAGGED!",
+            text: "⚡ PRESSURE PASSED!",
             x: 800,
             y: 450,
             color: "#EF4444",
@@ -401,6 +401,7 @@ export default function OnlineGame() {
 
         room.onMessage("roundEnd", (data: any) => {
           setRoundResult(data);
+          setHudTimeLeft(0);
           setStatus("ended");
         });
 
@@ -423,11 +424,11 @@ export default function OnlineGame() {
   }, [myName, isHost, hostKey, normalizedRoomCode, roundLength, mapName, powerUpsEnabled]);
 
   useEffect(() => {
-    if (status !== "playing") return;
+    if (status !== "playing" && status !== "ended") return;
 
     const transmitInput = (force = false) => {
       const room = roomRef.current;
-      if (!room) return;
+      if (!room || status !== "playing") return;
       const input = currentInput(keysRef.current);
       const mask = inputMask(input);
       const now = performance.now();
@@ -495,9 +496,12 @@ export default function OnlineGame() {
       const nextHudTime = Math.max(0, Math.ceil(state.roundTimeRemaining ?? 0));
       setHudTimeLeft(current => current === nextHudTime ? current : nextHudTime);
 
-      // Check jump input edge
-      const currentKeys = currentInput(keysRef.current);
-      if (currentKeys.up && !lastJumpHeldRef.current) {
+      const now = performance.now();
+      const dtMs = lastRenderAtRef.current > 0 ? Math.min(50, now - lastRenderAtRef.current) : 16;
+      lastRenderAtRef.current = now;
+
+      const input = status === "playing" ? currentInput(keysRef.current) : { up: false, down: false, left: false, right: false };
+      if (input.up && !lastJumpHeldRef.current) {
         jumpBufferMsRef.current = 120;
       } else if (!currentKeys.up && jumpBufferMsRef.current <= 0) {
         jumpBufferMsRef.current = 0;
@@ -641,7 +645,9 @@ export default function OnlineGame() {
       renderGame(ctx, renderState, canvas.width, canvas.height, map);
       renderHUD(ctx, renderState, canvas.width, myIndex >= 0 ? myIndex : 0);
 
-      rafRef.current = requestAnimationFrame(gameLoop);
+      if (status === "playing") {
+        rafRef.current = requestAnimationFrame(gameLoop);
+      }
     };
 
     rafRef.current = requestAnimationFrame(gameLoop);
@@ -724,13 +730,13 @@ export default function OnlineGame() {
     );
   }
 
-  // 2. ROUND END VIEW
+  // 2. ROUND OVER VIEW
   if (status === "ended" && roundResult) {
-    const roundPlayers = roundResult.scores ?? [];
+    const loserPlayer = roundResult.scores?.find((p: any) => p.id === roundResult.loserId) ?? null;
 
     return (
       <div className="arcade-bg">
-        <div className="arcade-card" style={{ maxWidth: "560px", textAlign: "center" }}>
+        <div className="arcade-card" style={{ maxWidth: "520px", textAlign: "center" }}>
           <div style={{
             display: "inline-block",
             background: "var(--arcade-yellow)",
@@ -739,7 +745,7 @@ export default function OnlineGame() {
             borderRadius: "999px",
             border: "3px solid #0D0B1C",
             fontWeight: 900,
-            fontSize: "0.95rem",
+            fontSize: "0.85rem",
             letterSpacing: "0.08em",
             boxShadow: "0 4px 0 #D4A30B",
             marginBottom: "1rem",
@@ -749,58 +755,70 @@ export default function OnlineGame() {
 
           <h1 style={{
             fontFamily: "'Fredoka', sans-serif",
-            fontSize: "3rem",
+            fontSize: "2.8rem",
             fontWeight: 900,
             color: "#FFFFFF",
-            margin: "0 0 1.2rem 0",
+            margin: "0 0 1.3rem 0",
+            textShadow: "0 4px 0 #0D0B1C",
           }}>
             ROUND OVER!
           </h1>
 
-          {/* Round Players */}
-          <div style={{ marginBottom: "2rem" }}>
+          <div style={{
+            background: "var(--bg-card-inner)",
+            border: `3px solid ${loserPlayer?.color ?? "#FFFFFF"}`,
+            borderRadius: "14px",
+            padding: "1.1rem",
+            marginBottom: "1.6rem",
+            boxShadow: "0 5px 0 #0D0B1C",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "0.55rem",
+          }}>
             <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-              gap: "0.75rem",
+              width: "58px",
+              height: "66px",
+              background: loserPlayer?.color ?? "#FFFFFF",
+              border: "4px solid #0E0C22",
+              borderRadius: "24px 24px 17px 17px",
+              boxShadow: "inset 0 -18px 0 rgba(0, 0, 0, 0.22), 0 5px 0 rgba(0, 0, 0, 0.3)",
+              position: "relative",
             }}>
-              {roundPlayers.map((p: any) => (
-                <div
-                  key={p.id}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    padding: "0.85rem",
-                    background: "var(--bg-card-inner)",
-                    border: `3px solid ${p.color ?? "#FFFFFF"}`,
-                    borderRadius: "14px",
-                    boxShadow: "0 4px 0 #0D0B1C",
-                  }}
-                >
-                  <div style={{
-                    width: "42px",
-                    height: "42px",
-                    borderRadius: "50%",
-                    background: p.color ?? "#FFFFFF",
-                    border: "3px solid #FFFFFF",
-                    boxShadow: "0 3px 0 rgba(0, 0, 0, 0.35)",
-                  }} />
-                  <div style={{
-                    fontWeight: 900,
-                    fontSize: "1rem",
-                    color: "#FFFFFF",
-                    textAlign: "center",
-                  }}>
-                    {p.name}
-                  </div>
-                </div>
-              ))}
+              <span style={{
+                position: "absolute",
+                left: "13px",
+                top: "22px",
+                width: "11px",
+                height: "11px",
+                background: "#FFFFFF",
+                border: "2px solid #0E0C22",
+                borderRadius: "50%",
+              }} />
+              <span style={{
+                position: "absolute",
+                right: "13px",
+                top: "22px",
+                width: "11px",
+                height: "11px",
+                background: "#FFFFFF",
+                border: "2px solid #0E0C22",
+                borderRadius: "50%",
+              }} />
+            </div>
+            <div style={{ color: "#FFFFFF", fontWeight: 900, fontSize: "1.1rem" }}>
+              {loserPlayer?.name ?? roundResult.loserName ?? "Player"}
+            </div>
+            <div style={{
+              color: "var(--arcade-red)",
+              fontWeight: 900,
+              fontSize: "1rem",
+              letterSpacing: "0.12em",
+            }}>
+              LOSER
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
             {amHost && (
               <ArcadeButton color="green" size="lg" fullWidth onClick={handleStartGame} icon="🔄">
@@ -1054,6 +1072,7 @@ export default function OnlineGame() {
         }}>
           {Math.floor(hudTimeLeft / 60)}:{String(hudTimeLeft % 60).padStart(2, "0")}
         </div>
+
       </div>
     );
   }

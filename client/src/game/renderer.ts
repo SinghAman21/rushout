@@ -7,7 +7,7 @@ import {
   POWER_UP_CONFIGS,
   POWER_UP_INDEX_TO_TYPE,
   PLAYER_SIZE,
-} from "chase-tag-shared";
+} from "rushout-shared";
 import type { LocalGameState, VisualEvent } from "./engine.js";
 
 // Helper descriptions for the in-game Power-Up HUD
@@ -17,7 +17,7 @@ const POWER_UP_EFFECT_DESCRIPTIONS: Record<string, string> = {
   ghost_step: "INVISIBLE TO OPPONENTS!",
   blink_dash: "WARP DASH FORWARD!",
   mirror_decoy: "SPAWNS RUNNING FAKE CLONE!",
-  safe_bubble: "SHIELD: BLOCKS 1 TAG ATTEMPT!",
+  safe_bubble: "SHIELD: BLOCKS 1 PRESSURE PASS!",
   sticky_patch: "DROPPED SLOW GOO PUDDLE!",
 };
 
@@ -609,7 +609,7 @@ function renderBillboard(ctx: CanvasRenderingContext2D, x: number, y: number, sc
   ctx.fillStyle = "#F0ABFC";
   ctx.font = "900 13px 'Fredoka', sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("TAG!", 0, -42);
+  ctx.fillText("RUN!", 0, -42);
   ctx.fillStyle = "#334155";
   ctx.fillRect(-24, -22, 10, 22);
   ctx.fillRect(14, -22, 10, 22);

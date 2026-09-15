@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { MAP_NAMES } from "chase-tag-shared";
+import { MAP_NAMES } from "rushout-shared";
 import { randomPlayerName } from "../playerNames.js";
 import ArcadeButton from "../components/ArcadeButton.js";
 

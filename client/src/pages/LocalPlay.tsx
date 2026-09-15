@@ -4,7 +4,7 @@ import {
   MAPS,
   MAP_NAMES,
   PLAYER_COLORS,
-} from "chase-tag-shared";
+} from "rushout-shared";
 import {
   createLocalGame,
   updateLocalGame,
@@ -67,15 +67,13 @@ export default function LocalPlay() {
     updateLocalGame(game, inputs, dt);
     const nextHudTime = Math.max(0, Math.ceil(game.roundTimeRemaining));
     setHudTimeLeft(current => current === nextHudTime ? current : nextHudTime);
-    if (game.ended) {
-      setRenderVersion(v => v + 1);
-      return;
-    }
 
-    powerUpTimerRef.current += dt;
-    if (powerUpTimerRef.current > 12000) {
-      powerUpTimerRef.current = 0;
-      spawnPowerUps(game);
+    if (!game.ended) {
+      powerUpTimerRef.current += dt;
+      if (powerUpTimerRef.current > 12000) {
+        powerUpTimerRef.current = 0;
+        spawnPowerUps(game);
+      }
     }
 
     if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
@@ -88,6 +86,11 @@ export default function LocalPlay() {
     // Unified responsive renderer
     renderGame(ctx, game, canvas.width, canvas.height);
     renderHUD(ctx, game, canvas.width, 0);
+
+    if (game.ended) {
+      setRenderVersion(v => v + 1);
+      return;
+    }
 
     rafRef.current = requestAnimationFrame(gameLoop);
   }, [getInputs]);
@@ -105,15 +108,14 @@ export default function LocalPlay() {
     gameRef.current = null;
   }, []);
 
-  // 1. ROUND OVER / RESULTS SCREEN
+  // 1. ROUND OVER VIEW
   if (gameStarted && gameRef.current?.ended) {
-    const result = gameRef.current.result;
-    const sortedPlayers = [...gameRef.current.players].sort((a, b) => b.score - a.score);
+    const game = gameRef.current;
+    const loserPlayer = game.players.find(p => p.id === game.result?.loserId || p.isIt);
 
     return (
       <div className="arcade-bg">
-        <div className="arcade-card" style={{ maxWidth: "560px", textAlign: "center" }}>
-          {/* Header Banner */}
+        <div className="arcade-card" style={{ maxWidth: "520px", textAlign: "center" }}>
           <div style={{
             display: "inline-block",
             background: "var(--arcade-yellow)",
@@ -122,114 +124,82 @@ export default function LocalPlay() {
             borderRadius: "999px",
             border: "3px solid #0D0B1C",
             fontWeight: 900,
-            fontSize: "0.95rem",
+            fontSize: "0.85rem",
             letterSpacing: "0.08em",
             boxShadow: "0 4px 0 #D4A30B",
             marginBottom: "1rem",
           }}>
-            MATCH FINISHED!
+            MATCH COMPLETE!
           </div>
 
           <h1 style={{
             fontFamily: "'Fredoka', sans-serif",
-            fontSize: "3rem",
+            fontSize: "2.8rem",
             fontWeight: 900,
             color: "#FFFFFF",
-            margin: "0 0 1.2rem 0",
+            margin: "0 0 1.3rem 0",
             textShadow: "0 4px 0 #0D0B1C",
           }}>
             ROUND OVER!
           </h1>
 
-          {/* Loser Highlight Card */}
-          <div style={{
-            background: "rgba(255, 71, 87, 0.15)",
-            border: "3px solid var(--arcade-red)",
-            borderRadius: "16px",
-            padding: "1rem 1.5rem",
-            marginBottom: "1.8rem",
-            boxShadow: "0 6px 0 rgba(196, 38, 53, 0.4)",
-          }}>
-            <div style={{ fontSize: "2rem", marginBottom: "0.3rem" }}>💀</div>
-            <div style={{ color: "var(--arcade-red)", fontWeight: 800, fontSize: "1.4rem" }}>
-              {result?.loserName ?? "Unknown"} WAS "IT"!
-            </div>
-            <div style={{ color: "var(--text-dim)", fontSize: "0.95rem", marginTop: "0.2rem" }}>
-              Time expired while tagged. They lose this round!
-            </div>
-          </div>
-
-          {/* Leaderboard Table */}
-          <div style={{ marginBottom: "2rem" }}>
-            <h3 style={{
-              fontSize: "0.9rem",
-              fontWeight: 800,
-              color: "var(--text-dim)",
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-              marginBottom: "0.75rem",
-              textAlign: "left",
+          {loserPlayer && (
+            <div style={{
+              background: "var(--bg-card-inner)",
+              border: `3px solid ${loserPlayer.color}`,
+              borderRadius: "14px",
+              padding: "1.1rem",
+              marginBottom: "1.6rem",
+              boxShadow: "0 5px 0 #0D0B1C",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "0.55rem",
             }}>
-              Final Standings
-            </h3>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              {sortedPlayers.map((p, rank) => (
-                <div
-                  key={p.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "0.75rem 1.2rem",
-                    background: p.isIt ? "rgba(255, 71, 87, 0.15)" : "var(--bg-card-inner)",
-                    border: `3px solid ${p.isIt ? "var(--arcade-red)" : "#0D0B1C"}`,
-                    borderRadius: "12px",
-                    boxShadow: "0 4px 0 #0D0B1C",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                    <span style={{ fontSize: "1.2rem", width: "24px" }}>
-                      {rank === 0 ? "🥇" : rank === 1 ? "🥈" : rank === 2 ? "🥉" : "🎖️"}
-                    </span>
-                    <span style={{
-                      width: "14px",
-                      height: "14px",
-                      borderRadius: "50%",
-                      background: p.color,
-                      border: "2px solid #FFFFFF",
-                      display: "inline-block",
-                    }} />
-                    <span style={{
-                      fontWeight: 800,
-                      fontSize: "1.1rem",
-                      color: p.isIt ? "var(--arcade-red)" : "#FFFFFF",
-                    }}>
-                      {p.name}
-                    </span>
-                    {p.isIt && (
-                      <span style={{
-                        background: "var(--arcade-red)",
-                        color: "#FFFFFF",
-                        fontSize: "0.75rem",
-                        fontWeight: 900,
-                        padding: "0.15rem 0.5rem",
-                        borderRadius: "6px",
-                      }}>
-                        IT AT END
-                      </span>
-                    )}
-                  </div>
-
-                  <div style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--arcade-yellow)" }}>
-                    {p.score} {p.score === 1 ? "tag" : "tags"}
-                  </div>
-                </div>
-              ))}
+              <div style={{
+                width: "58px",
+                height: "66px",
+                background: loserPlayer.color,
+                border: "4px solid #0E0C22",
+                borderRadius: "24px 24px 17px 17px",
+                boxShadow: "inset 0 -18px 0 rgba(0, 0, 0, 0.22), 0 5px 0 rgba(0, 0, 0, 0.3)",
+                position: "relative",
+              }}>
+                <span style={{
+                  position: "absolute",
+                  left: "13px",
+                  top: "22px",
+                  width: "11px",
+                  height: "11px",
+                  background: "#FFFFFF",
+                  border: "2px solid #0E0C22",
+                  borderRadius: "50%",
+                }} />
+                <span style={{
+                  position: "absolute",
+                  right: "13px",
+                  top: "22px",
+                  width: "11px",
+                  height: "11px",
+                  background: "#FFFFFF",
+                  border: "2px solid #0E0C22",
+                  borderRadius: "50%",
+                }} />
+              </div>
+              <div style={{ color: "#FFFFFF", fontWeight: 900, fontSize: "1.1rem" }}>
+                {loserPlayer.name}
+              </div>
+              <div style={{
+                color: "var(--arcade-red)",
+                fontWeight: 900,
+                fontSize: "1rem",
+                letterSpacing: "0.12em",
+              }}>
+                LOSER
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Action Buttons */}
           <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
             <ArcadeButton color="green" size="lg" fullWidth onClick={handleRestart} icon="🔄">
               PLAY AGAIN
@@ -278,6 +248,8 @@ export default function LocalPlay() {
         }}>
           {Math.floor(hudTimeLeft / 60)}:{String(hudTimeLeft % 60).padStart(2, "0")}
         </div>
+
+
       </div>
     );
   }

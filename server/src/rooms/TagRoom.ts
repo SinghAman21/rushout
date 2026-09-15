@@ -26,7 +26,7 @@ import {
   STICKY_SLOW_MULTIPLIER,
   POWER_UP_CONFIGS,
   type PowerUpType,
-} from "chase-tag-shared";
+} from "rushout-shared";
 
 const require = createRequire(import.meta.url);
 const colyseus = require("colyseus") as any;

@@ -1,5 +1,5 @@
 {
-  "name": "chase-tag-server",
+  "name": "rushout-server",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -11,7 +11,7 @@
   "dependencies": {
     "colyseus": "^0.15.0",
     "@colyseus/monitor": "^0.15.0",
-    "chase-tag-shared": "1.0.0"
+    "rushout-shared": "1.0.0"
   },
   "devDependencies": {
     "tsx": "^4.15.0",

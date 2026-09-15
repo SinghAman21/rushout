@@ -4,7 +4,7 @@ export default function MainMenu() {
   return (
     <div className="arcade-bg">
       <a
-        href="https://github.com/SinghAman21/tag"
+        href="https://github.com/SinghAman21/rushout"
         target="_blank"
         rel="noopener noreferrer"
         aria-label="View source on GitHub"
@@ -85,7 +85,7 @@ export default function MainMenu() {
           `,
           animation: "bobTitle 4s ease-in-out infinite",
         }}>
-          CHASE TAG
+          RUSHOUT
         </h1>
 
         <p style={{
@@ -95,7 +95,7 @@ export default function MainMenu() {
           marginTop: "1rem",
           maxWidth: "480px",
         }}>
-          One player is <span style={{ color: "var(--arcade-red)", fontWeight: 800 }}>"IT"</span>. Run, vault, and tag to survive before the clock hits zero!
+          Run fast. Pass the pressure. Beat the countdown in chaotic arcade arenas!
         </p>
       </div>
 
@@ -321,7 +321,7 @@ export default function MainMenu() {
       </div>
 
       <a
-        href="https://github.com/SinghAman21/tag"
+        href="https://github.com/SinghAman21/rushout"
         target="_blank"
         rel="noopener noreferrer"
         style={{

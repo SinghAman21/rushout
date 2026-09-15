@@ -21,7 +21,7 @@ import {
   STICKY_PATCH_RADIUS,
   STICKY_SLOW_MULTIPLIER,
   PLAYER_COLORS,
-} from "chase-tag-shared";
+} from "rushout-shared";
 
 export interface VisualEvent {
   id: string;
@@ -435,7 +435,7 @@ export function updateLocalGame(
             state.events.push({
               id: `ev_${Date.now()}`,
               type: "shield_block",
-              text: "🛡️ SHIELD BLOCKED TAG!",
+              text: "🛡️ SHIELD BLOCKED!",
               x: otherCx,
               y: other.y - 16,
               color: "#2ED573",
@@ -445,7 +445,7 @@ export function updateLocalGame(
             continue;
           }
 
-          // Tag! Swap roles, then wait for separation before tagging again.
+          // Swap pressure roles, then wait for separation before swapping again.
           itPlayer.isIt = false;
           other.isIt = true;
           itPlayer.score += 1;
@@ -454,7 +454,7 @@ export function updateLocalGame(
           state.events.push({
             id: `ev_${Date.now()}_tag`,
             type: "tag",
-            text: `👑 ${itPlayer.name} TAGGED ${other.name}!`,
+            text: `⚡ ${itPlayer.name} PASSED PRESSURE TO ${other.name}!`,
             x: (itCx + otherCx) / 2,
             y: Math.min(itCy, otherCy) - 24,
             color: "#FF4757",

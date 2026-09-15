@@ -15,5 +15,5 @@ const gameServer = new colyseus.Server({});
 gameServer.define("tag_room", TagRoom).filterBy(["roomCode"]);
 
 gameServer.listen(port).then(() => {
-  console.log(`Chase Tag server listening on port ${port}`);
+  console.log(`Rushout server listening on port ${port}`);
 });

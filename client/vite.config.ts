@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "chase-tag-shared": fileURLToPath(new URL("../shared/src/browser.ts", import.meta.url)),
+      "rushout-shared": fileURLToPath(new URL("../shared/src/browser.ts", import.meta.url)),
     },
   },
   optimizeDeps: {
