@@ -1160,22 +1160,6 @@ function renderActivePowerUpCard(
     ctx.textAlign = "right";
     ctx.fillStyle = "#FFFFFF";
     ctx.fillText(`${secondsLeft}s`, cardX + cardW - 12, cardY + 22);
-  } else {
-    // Subtle empty power-up prompt slot
-    ctx.fillStyle = "rgba(18, 16, 38, 0.85)";
-    ctx.beginPath();
-    roundRectPath(ctx, cardX, cardY + 14, cardW, 36, 12);
-    ctx.fill();
-
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    ctx.font = "700 11px 'Fredoka', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#94A3B8";
-    ctx.fillText("📦 RUN OVER GLOWING ORBS TO GRAB POWER-UPS!", cardX + cardW / 2, cardY + 32);
   }
 
   ctx.restore();

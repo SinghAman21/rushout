@@ -16,6 +16,7 @@ import {
 } from "rushout-shared";
 import { renderGame, renderHUD, extractPlayers } from "../game/renderer.js";
 import ArcadeButton from "../components/ArcadeButton.js";
+import TouchJoystick, { type JoystickDirection } from "../components/TouchJoystick.js";
 
 const COLYSEUS_URL = import.meta.env.VITE_COLYSEUS_URL || "ws://localhost:2567";
 const ROOM_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -66,11 +67,11 @@ function inputMask(input: OnlineInput) {
   return mask;
 }
 
-function currentInput(keys: Record<string, boolean>): OnlineInput {
+function currentInput(keys: Record<string, boolean>, touch: OnlineInput = { up: false, left: false, right: false }): OnlineInput {
   return {
-    up: !!keys["w"] || !!keys["ArrowUp"] || !!keys["8"] || !!keys["W"] || !!keys[" "] || !!keys["Spacebar"],
-    left: !!keys["a"] || !!keys["ArrowLeft"] || !!keys["4"] || !!keys["A"],
-    right: !!keys["d"] || !!keys["ArrowRight"] || !!keys["6"] || !!keys["D"],
+    up: touch.up || !!keys["w"] || !!keys["ArrowUp"] || !!keys["8"] || !!keys["W"] || !!keys[" "] || !!keys["Spacebar"],
+    left: touch.left || !!keys["a"] || !!keys["ArrowLeft"] || !!keys["4"] || !!keys["A"],
+    right: touch.right || !!keys["d"] || !!keys["ArrowRight"] || !!keys["6"] || !!keys["D"],
   };
 }
 
@@ -256,12 +257,14 @@ export default function OnlineGame() {
   const [connectionError, setConnectionError] = useState("");
   const [copied, setCopied] = useState(false);
   const [hudTimeLeft, setHudTimeLeft] = useState(roundLength);
+  const [joystickDirection, setJoystickDirection] = useState<JoystickDirection>(0);
 
   const clientRef = useRef<Colyseus.Client | null>(null);
   const roomRef = useRef<Colyseus.Room | null>(null);
   const gameFrameRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const keysRef = useRef<Record<string, boolean>>({});
+  const touchInputRef = useRef<OnlineInput>({ up: false, left: false, right: false });
   const rafRef = useRef<number>(0);
   const smoothedPlayersRef = useRef<Map<string, PlayerState>>(new Map());
   const connectedRef = useRef(false);
@@ -279,6 +282,32 @@ export default function OnlineGame() {
   const lastSentMaskRef = useRef(-1);
   const lastSentAtRef = useRef(0);
   const inputChangedRef = useRef(false);
+
+  const setTouchControl = useCallback((control: keyof OnlineInput, pressed: boolean) => {
+    const input = touchInputRef.current;
+    if (input[control] === pressed) return;
+
+    input[control] = pressed;
+    if (control === "up" && pressed) {
+      // A short buffer makes a tap reliable even between fixed simulation ticks.
+      jumpBufferMsRef.current = 120;
+    }
+    inputChangedRef.current = true;
+  }, []);
+
+  const setJoystickMovement = useCallback((direction: JoystickDirection) => {
+    setJoystickDirection(direction);
+    setTouchControl("left", direction < 0);
+    setTouchControl("right", direction > 0);
+  }, [setTouchControl]);
+
+  const releaseTouchControls = useCallback(() => {
+    const input = touchInputRef.current;
+    setJoystickDirection(0);
+    if (!input.up && !input.left && !input.right) return;
+    touchInputRef.current = { up: false, left: false, right: false };
+    inputChangedRef.current = true;
+  }, []);
 
   useEffect(() => {
     const connect = async () => {
@@ -429,7 +458,7 @@ export default function OnlineGame() {
     const transmitInput = (force = false) => {
       const room = roomRef.current;
       if (!room || status !== "playing") return;
-      const input = currentInput(keysRef.current);
+      const input = currentInput(keysRef.current, touchInputRef.current);
       const mask = inputMask(input);
       const now = performance.now();
       if (force || mask !== lastSentMaskRef.current || now - lastSentAtRef.current >= 33) {
@@ -460,6 +489,7 @@ export default function OnlineGame() {
 
     window.addEventListener("keydown", handleDown);
     window.addEventListener("keyup", handleUp);
+    window.addEventListener("blur", releaseTouchControls);
 
     const inputInterval = setInterval(() => transmitInput(false), 33);
 
@@ -497,7 +527,7 @@ export default function OnlineGame() {
       setHudTimeLeft(current => current === nextHudTime ? current : nextHudTime);
 
       const input = status === "playing"
-        ? currentInput(keysRef.current)
+        ? currentInput(keysRef.current, touchInputRef.current)
         : { up: false, left: false, right: false };
       if (input.up && !lastJumpHeldRef.current) {
         jumpBufferMsRef.current = 120;
@@ -559,7 +589,7 @@ export default function OnlineGame() {
       while (accumulatorRef.current >= FIXED_DT) {
         accumulatorRef.current -= FIXED_DT;
 
-        const input = currentInput(keysRef.current);
+        const input = currentInput(keysRef.current, touchInputRef.current);
         if (jumpBufferMsRef.current > 0) {
           jumpBufferMsRef.current = Math.max(0, jumpBufferMsRef.current - FIXED_DT);
         }
@@ -653,6 +683,8 @@ export default function OnlineGame() {
     return () => {
       window.removeEventListener("keydown", handleDown);
       window.removeEventListener("keyup", handleUp);
+      window.removeEventListener("blur", releaseTouchControls);
+      releaseTouchControls();
       clearInterval(inputInterval);
       cancelAnimationFrame(rafRef.current);
     };
@@ -1071,6 +1103,27 @@ export default function OnlineGame() {
           {Math.floor(hudTimeLeft / 60)}:{String(hudTimeLeft % 60).padStart(2, "0")}
         </div>
 
+        <div className="touch-controls" aria-label="Touch game controls">
+          <TouchJoystick
+            direction={joystickDirection}
+            onDirectionChange={setJoystickMovement}
+          />
+          <button
+            type="button"
+            className="touch-control-button touch-control-button--jump"
+            aria-label="Jump"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              setTouchControl("up", true);
+            }}
+            onPointerUp={() => setTouchControl("up", false)}
+            onPointerCancel={() => setTouchControl("up", false)}
+            onLostPointerCapture={() => setTouchControl("up", false)}
+          >
+            JUMP
+          </button>
+        </div>
       </div>
     );
   }
