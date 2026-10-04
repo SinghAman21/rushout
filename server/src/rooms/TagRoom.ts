@@ -133,7 +133,7 @@ function isGrounded(player: { x: number; y: number; vy: number }, map: GameMap):
   return false;
 }
 
-function moveVertically(player: PlayerSchema, newY: number, map: GameMap, ghostUp = false) {
+function moveVertically(player: { x: number; y: number; vy: number }, newY: number, map: GameMap, ghostUp = false) {
   const playerH = PLAYER_SIZE * 2;
   const oldY = player.y;
 
@@ -282,6 +282,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   private playerLastProcessedTick: Map<string, number> = new Map();
   private lastUpInputs: Map<string, boolean> = new Map();
   private jumpBuffer: Map<string, number> = new Map();
+  private decoyBrains: Map<string, { dir: -1 | 0 | 1; decideAt: number; jumpFrames: number; lastX: number; stuckFrames: number }> = new Map();
   private tagLocked = false;
   private hostId: string | null = null;
   private hostKey: string | null = null;
@@ -558,6 +559,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.s.spawns.clear();
     this.s.stickyPatches.clear();
     this.s.decoys.clear();
+    this.decoyBrains.clear();
 
     this.lastTick = Date.now();
 
@@ -605,13 +607,65 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     for (const k of staleSticky) this.s.stickyPatches.delete(k);
 
     const staleDecoys: string[] = [];
+    const nowMs = Date.now();
     this.s.decoys.forEach((d, key) => {
       d.remainingMs -= dt;
-      d.x += d.vx;
-      d.y += d.vy;
-      d.vx *= 0.97;
-      d.vy *= 0.97;
-      if (d.remainingMs <= 0) staleDecoys.push(key);
+      if (d.remainingMs <= 0) {
+        staleDecoys.push(key);
+        this.decoyBrains.delete(key);
+        return;
+      }
+      // Wander brain: full player-like movement so clones are
+      // indistinguishable from real players on the move.
+      let brain = this.decoyBrains.get(key);
+      if (!brain) {
+        brain = { dir: 0, decideAt: 0, jumpFrames: 0, lastX: d.x, stuckFrames: 0 };
+        this.decoyBrains.set(key, brain);
+      }
+      if (nowMs >= brain.decideAt) {
+        const roll = Math.random();
+        brain.dir = roll < 0.35 ? -1 : roll < 0.7 ? 1 : 0;
+        if (roll > 0.75) {
+          if (isGrounded(d, this.map)) d.vy = -PLAYER_JUMP_SPEED;
+          else brain.jumpFrames = 8;
+        }
+        brain.decideAt = nowMs + 350 + Math.random() * 850;
+      }
+      if (Math.abs(d.x - brain.lastX) < 1 && brain.dir !== 0) brain.stuckFrames++;
+      else brain.stuckFrames = 0;
+      brain.lastX = d.x;
+      if (brain.stuckFrames > 30) {
+        brain.stuckFrames = 0;
+        brain.jumpFrames = 6;
+        brain.dir = brain.dir === 1 ? -1 : 1;
+      }
+
+      let dspeed = PLAYER_MOVE_SPEED;
+      const dcx = d.x + PLAYER_SIZE;
+      const dcy = d.y + PLAYER_SIZE;
+      this.s.stickyPatches.forEach((patch) => {
+        if (distSq(dcx, dcy, patch.x, patch.y) < STICKY_PATCH_RADIUS * STICKY_PATCH_RADIUS) {
+          dspeed *= STICKY_SLOW_MULTIPLIER;
+        }
+      });
+
+      if (brain.jumpFrames > 0 && isGrounded(d, this.map)) {
+        d.vy = -PLAYER_JUMP_SPEED;
+      }
+      if (brain.jumpFrames > 0) brain.jumpFrames -= 1;
+
+      d.vx = brain.dir * dspeed;
+      d.vy = Math.min(MAX_FALL_SPEED, d.vy + GRAVITY);
+      const dnx = d.x + d.vx;
+      if (!collidesWithObstacles(dnx, d.y, this.map.obstacles)) {
+        d.x = dnx;
+      } else {
+        d.vx = 0;
+      }
+      moveVertically(d, d.y + d.vy, this.map);
+      d.x = Math.max(0, Math.min(this.map.width - PLAYER_SIZE * 2, d.x));
+      d.y = Math.max(0, Math.min(this.map.height - PLAYER_SIZE * 2, d.y));
+      if (d.y >= this.map.height - PLAYER_SIZE * 2) d.vy = 0;
     });
     for (const k of staleDecoys) this.s.decoys.delete(k);
 
@@ -816,8 +870,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
         decoy.ownerId = player.id;
         decoy.x = player.x;
         decoy.y = player.y;
-        decoy.vx = -player.facingX * 2;
-        decoy.vy = -player.facingY * 2;
+        decoy.vx = player.vx;
+        decoy.vy = player.vy;
         decoy.remainingMs = config.durationMs;
         this.s.decoys.set(decoy.id, decoy);
         break;
@@ -903,6 +957,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.playerLastClientTick.clear();
     this.playerLastProcessedTick.clear();
     this.playerPendingInputs.clear();
+    this.decoyBrains.clear();
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
       this.tickInterval = null;

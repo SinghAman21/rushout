@@ -248,18 +248,20 @@ export function renderGame(
     ctx.restore();
   }
 
-  // 6. DECOYS
+  // 6. DECOYS (fully indistinguishable from players: owner colors + name,
+  // motion-driven gaze; only a split-second fade as they expire)
   for (const decoy of decoys) {
     const owner = players.find(p => p.id === decoy.ownerId);
     const color = owner?.color || "#9C88FF";
-    const alpha = Math.min(1, decoy.remainingMs / 1000);
+    const alpha = Math.min(1, decoy.remainingMs / 400);
 
     ctx.save();
-    ctx.globalAlpha = alpha * 0.6;
-    if (Math.random() > 0.65) {
-      ctx.translate((Math.random() - 0.5) * 5, 0);
-    }
-    drawCartoonPlayer(ctx, decoy.x, decoy.y, color, false, false, { x: -1, y: 0 }, "CLONE");
+    ctx.globalAlpha = alpha;
+    drawCartoonPlayer(
+      ctx, decoy.x, decoy.y, color, false, false,
+      { x: decoy.vx === 0 ? 1 : Math.sign(decoy.vx), y: 0 },
+      owner?.name ?? "CLONE",
+    );
     ctx.restore();
   }
 
