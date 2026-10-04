@@ -335,6 +335,50 @@
   transform: translateY(2px);
 }
 
+/* Landscape prompt for touch devices playing the full-screen game. */
+.landscape-guard {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(12, 10, 26, 0.97);
+  text-align: center;
+}
+
+.landscape-guard__card {
+  width: min(100%, 25rem);
+  padding: 2rem 1.5rem;
+  background: var(--bg-card);
+  border: 4px solid var(--border-dark);
+  border-radius: 24px;
+  box-shadow: 0 10px 0 var(--border-dark), 0 20px 30px rgba(0, 0, 0, 0.5);
+}
+
+.landscape-guard__icon {
+  margin-bottom: 0.5rem;
+  color: var(--arcade-yellow);
+  font-size: 4rem;
+  line-height: 1;
+}
+
+.landscape-guard h2 {
+  margin: 0 0 0.75rem;
+  color: #FFFFFF;
+  font-family: 'Fredoka', sans-serif;
+  font-size: 1.7rem;
+  font-weight: 900;
+}
+
+.landscape-guard p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
 /* Touch controls appear during online matches on touch-first devices only. */
 .touch-controls {
   position: fixed;
