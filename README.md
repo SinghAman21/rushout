@@ -121,6 +121,12 @@ Speed Surge · Freeze Pulse · Ghost Step · Blink Dash · Mirror Decoy · Safe 
 
 Pickups spawn on the map in a random rotation. Any player can grab one, and it activates immediately.
 
+### Ability Playground (dev/testing only)
+
+A hidden `/playground` route runs a bot arena for testing: 2–13 random bots running and jumping, instant firing of any ability, player elimination, crowning a winner, and round controls. It is intentionally **not linked** from the main menu.
+
+Everything is drivable via Playwright using `data-testid` hooks and the `window.__playground` API (`snapshot()`, `triggerAbility(type, idx)`, `eliminate(idx)`, `crown(idx)`, `start()`, `setTarget(idx)`).
+
 ## Deployment
 
 - **Client:** build with `npm run build --workspace=client`, then host `client/dist` statically. Set `VITE_COLYSEUS_URL` to your deployed server's WebSocket URL.

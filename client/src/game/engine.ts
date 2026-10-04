@@ -39,6 +39,7 @@ export interface LocalGameState {
   spawns: PowerUpSpawn[];
   stickyPatches: StickyPatch[];
   decoys: Decoy[];
+  decoyBrains: Record<string, DecoyBrain>;
   map: GameMap;
   roundTimeRemaining: number;
   roundLength: number;
@@ -56,6 +57,14 @@ export interface LocalPlayerInput {
   right: boolean;
 }
 
+export interface DecoyBrain {
+  dir: -1 | 0 | 1;
+  decideAt: number;
+  jumpFrames: number;
+  lastX: number;
+  stuckFrames: number;
+}
+
 const ZERO_INPUT: LocalPlayerInput = {
   up: false,
   down: false,
@@ -71,8 +80,8 @@ export function createLocalGame(
   const players: PlayerState[] = playerNames.map((name, i) => ({
     id: `local_${i}`,
     name,
-    x: map.spawnPoints[i].x,
-    y: map.spawnPoints[i].y,
+    x: map.spawnPoints[i % map.spawnPoints.length].x,
+    y: map.spawnPoints[i % map.spawnPoints.length].y,
     vx: 0,
     vy: 0,
     isIt: i === 0,
@@ -91,6 +100,7 @@ export function createLocalGame(
     spawns: [],
     stickyPatches: [],
     decoys: [],
+    decoyBrains: {},
     map,
     roundTimeRemaining: roundLength,
     roundLength,
@@ -186,7 +196,7 @@ function isGrounded(player: { x: number; y: number; vy: number }, map: GameMap):
   return false;
 }
 
-function moveVertically(player: PlayerState, newY: number, map: GameMap) {
+function moveVertically(player: { x: number; y: number; vy: number }, newY: number, map: GameMap, ghostUp = false) {
   const playerH = PLAYER_SIZE * 2;
   const oldY = player.y;
 
@@ -200,7 +210,20 @@ function moveVertically(player: PlayerState, newY: number, map: GameMap) {
         return;
       }
     }
-  } else {
+    // A ghost that phased up inside a platform (jump peaked or effect
+    // expired mid-phase) lands on top instead of getting stuck.
+    let landY = Infinity;
+    for (const o of map.obstacles) {
+      if (rectCollides(player.x, player.y, playerH, playerH, o.x, o.y, o.w, o.h)) {
+        landY = Math.min(landY, o.y - playerH);
+      }
+    }
+    if (landY !== Infinity) {
+      player.y = landY;
+      player.vy = 0;
+      return;
+    }
+  } else if (!ghostUp) {
     for (const o of map.obstacles) {
       const obstacleBottom = o.y + o.h;
       if (horizontallyOverlaps(player.x, o) && oldY >= obstacleBottom && newY <= obstacleBottom) {
@@ -212,6 +235,9 @@ function moveVertically(player: PlayerState, newY: number, map: GameMap) {
   }
 
   if (!collidesWithObstacles(player.x, newY, map.obstacles)) {
+    player.y = newY;
+  } else if (ghostUp && player.vy < 0) {
+    // Ghost rises straight through platforms (one-way: still lands from above).
     player.y = newY;
   } else {
     player.vy = 0;
@@ -271,10 +297,6 @@ export function updateLocalGame(
         player.activePowerUp = null;
       }
     }
-    if (player.powerUpCooldown > 0) {
-      player.powerUpCooldown -= dt;
-      if (player.powerUpCooldown < 0) player.powerUpCooldown = 0;
-    }
   }
 
   // Update sticky patches
@@ -283,15 +305,71 @@ export function updateLocalGame(
     return sp.remainingMs > 0;
   });
 
-  // Update decoys
-  state.decoys = state.decoys.filter(d => {
+  // Update decoys with full player-like movement (gravity, jumps,
+  // platform collision) driven by wander brains, so clones move
+  // indistinguishably from real players.
+  const nowMs = Date.now();
+  const frameScale = dt / (1000 / 60);
+  const aliveDecoys: Decoy[] = [];
+  for (const d of state.decoys) {
     d.remainingMs -= dt;
-    d.x += d.vx;
-    d.y += d.vy;
-    d.vx *= 0.97;
-    d.vy *= 0.97;
-    return d.remainingMs > 0;
-  });
+    if (d.remainingMs <= 0) {
+      delete state.decoyBrains[d.id];
+      continue;
+    }
+    let brain = state.decoyBrains[d.id];
+    if (!brain) {
+      brain = state.decoyBrains[d.id] = { dir: 0, decideAt: 0, jumpFrames: 0, lastX: d.x, stuckFrames: 0 };
+    }
+    if (nowMs >= brain.decideAt) {
+      const roll = Math.random();
+      brain.dir = roll < 0.35 ? -1 : roll < 0.7 ? 1 : 0;
+      if (roll > 0.75) {
+        if (isGrounded(d, state.map)) d.vy = -PLAYER_JUMP_SPEED;
+        else brain.jumpFrames = 8;
+      }
+      brain.decideAt = nowMs + 350 + Math.random() * 850;
+    }
+    if (Math.abs(d.x - brain.lastX) < 1 && brain.dir !== 0) brain.stuckFrames++;
+    else brain.stuckFrames = 0;
+    brain.lastX = d.x;
+    if (brain.stuckFrames > 30) {
+      brain.stuckFrames = 0;
+      brain.jumpFrames = 6;
+      brain.dir = brain.dir === 1 ? -1 : 1;
+    }
+
+    let dspeed = PLAYER_MOVE_SPEED;
+    const dcx = d.x + PLAYER_SIZE;
+    const dcy = d.y + PLAYER_SIZE;
+    for (const patch of state.stickyPatches) {
+      const sdx = dcx - patch.x;
+      const sdy = dcy - patch.y;
+      if (Math.sqrt(sdx * sdx + sdy * sdy) < STICKY_PATCH_RADIUS) {
+        dspeed *= STICKY_SLOW_MULTIPLIER;
+      }
+    }
+
+    if (brain.jumpFrames > 0 && isGrounded(d, state.map)) {
+      d.vy = -PLAYER_JUMP_SPEED;
+    }
+    if (brain.jumpFrames > 0) brain.jumpFrames -= 1;
+
+    d.vx = brain.dir * dspeed * frameScale;
+    d.vy = Math.min(MAX_FALL_SPEED, d.vy + GRAVITY * frameScale);
+    const dnx = d.x + d.vx;
+    if (!collidesWithObstacles(dnx, d.y, state.map.obstacles)) {
+      d.x = dnx;
+    } else {
+      d.vx = 0;
+    }
+    moveVertically(d, d.y + d.vy * frameScale, state.map);
+    d.x = Math.max(0, Math.min(state.map.width - PLAYER_SIZE * 2, d.x));
+    d.y = Math.max(0, Math.min(state.map.height - PLAYER_SIZE * 2, d.y));
+    if (d.y >= state.map.height - PLAYER_SIZE * 2) d.vy = 0;
+    aliveDecoys.push(d);
+  }
+  state.decoys = aliveDecoys;
 
   // Move players
   for (let i = 0; i < state.players.length; i++) {
@@ -302,15 +380,20 @@ export function updateLocalGame(
 
     // Check if frozen
     const isFrozen = player.activePowerUp?.type === "freeze_pulse";
+    const isGhost = player.activePowerUp?.type === "ghost_step";
 
     let speed = PLAYER_MOVE_SPEED;
     if (player.activePowerUp?.type === "speed_surge") {
       speed *= SPEED_SURGE_MULTIPLIER;
     }
 
-    // Check sticky patches
+    // Check sticky patches (center-to-center, matches server)
+    const pcx = player.x + PLAYER_SIZE;
+    const pcy = player.y + PLAYER_SIZE;
     for (const patch of state.stickyPatches) {
-      if (dist(player, patch) < STICKY_PATCH_RADIUS) {
+      const sdx = pcx - patch.x;
+      const sdy = pcy - patch.y;
+      if (Math.sqrt(sdx * sdx + sdy * sdy) < STICKY_PATCH_RADIUS) {
         speed *= STICKY_SLOW_MULTIPLIER;
       }
     }
@@ -337,7 +420,7 @@ export function updateLocalGame(
     }
 
     const newY = player.y + player.vy * frameScale;
-    moveVertically(player, newY, state.map);
+    moveVertically(player, newY, state.map, isGhost);
 
     // Clamp to map
     player.x = Math.max(0, Math.min(state.map.width - PLAYER_SIZE * 2, player.x));
@@ -355,27 +438,24 @@ export function updateLocalGame(
     state.events = [];
   }
 
-  // Power-up pickup (auto-activate immediately)
+  // Power-up pickup (always fires instantly, no cooldown)
   for (const player of state.players) {
     for (let si = state.spawns.length - 1; si >= 0; si--) {
       const spawn = state.spawns[si];
       if (dist(player, spawn) < POWER_UP_PICKUP_RADIUS) {
-        if (player.powerUpCooldown <= 0) {
-          activatePowerUp(state, player, spawn.type);
-          const config = POWER_UP_CONFIGS[spawn.type];
-          player.powerUpCooldown = config.cooldownMs;
+        activatePowerUp(state, player, spawn.type);
+        const config = POWER_UP_CONFIGS[spawn.type];
 
-          state.events.push({
-            id: `ev_${Date.now()}_${Math.random()}`,
-            type: "pickup",
-            text: `+ ${config.icon} ${config.name.toUpperCase()}!`,
-            x: player.x + PLAYER_SIZE,
-            y: player.y - 12,
-            color: config.color,
-            remainingMs: 1400,
-            maxMs: 1400,
-          });
-        }
+        state.events.push({
+          id: `ev_${Date.now()}_${Math.random()}`,
+          type: "pickup",
+          text: `+ ${config.icon} ${config.name.toUpperCase()}!`,
+          x: player.x + PLAYER_SIZE,
+          y: player.y - 12,
+          color: config.color,
+          remainingMs: 1400,
+          maxMs: 1400,
+        });
         state.spawns.splice(si, 1);
       }
     }
@@ -468,7 +548,7 @@ export function updateLocalGame(
   }
 }
 
-function activatePowerUp(
+export function activatePowerUp(
   state: LocalGameState,
   player: PlayerState,
   type: PowerUpType
@@ -499,6 +579,18 @@ function activatePowerUp(
           remainingMs: POWER_UP_CONFIGS.freeze_pulse.durationMs,
           durationMs: POWER_UP_CONFIGS.freeze_pulse.durationMs,
         };
+      } else {
+        // Fizzle feedback: orb fires but nobody is in range
+        state.events.push({
+          id: `ev_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          type: "freeze",
+          text: "❄ NO ONE IN RANGE!",
+          x: player.x + PLAYER_SIZE,
+          y: player.y - 34,
+          color: "#00BFFF",
+          remainingMs: 1200,
+          maxMs: 1200,
+        });
       }
       break;
     }
@@ -529,8 +621,8 @@ function activatePowerUp(
         ownerId: player.id,
         x: player.x,
         y: player.y,
-        vx: -player.facing.x * 2,
-        vy: -player.facing.y * 2,
+        vx: player.vx,
+        vy: player.vy,
         remainingMs: POWER_UP_CONFIGS.mirror_decoy.durationMs,
       });
       break;
@@ -543,13 +635,19 @@ function activatePowerUp(
       };
       break;
 
-    case "sticky_patch":
+    case "sticky_patch": {
+      // Drop behind the runner (outside the slow radius) so the
+      // dropper isn't instantly slowed by their own goo.
+      const behind = STICKY_PATCH_RADIUS + PLAYER_SIZE;
+      const px = player.x + PLAYER_SIZE - player.facing.x * behind;
+      const py = player.y + PLAYER_SIZE - player.facing.y * behind;
       state.stickyPatches.push({
         id: `sticky_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        x: player.x,
-        y: player.y,
+        x: Math.max(0, Math.min(state.map.width, px)),
+        y: Math.max(0, Math.min(state.map.height, py)),
         remainingMs: POWER_UP_CONFIGS.sticky_patch.durationMs,
       });
       break;
+    }
   }
 }

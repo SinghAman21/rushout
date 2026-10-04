@@ -28,3 +28,4 @@ Thumbs.db
 # Vite
 .cache/
 .vite/
+.playwright-mcp/

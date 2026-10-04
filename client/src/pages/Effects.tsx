@@ -11,7 +11,7 @@ import { drawCartoonPlayer, roundRectPath } from "../game/renderer.js";
 const HOW_TO_USE: Record<PowerUpType, string> = {
   speed_surge: "Fires on pickup — auto burst for 3s. Great for escaping when you're IT.",
   freeze_pulse: "Fires on pickup — freezes the nearest rival in 300px for 2s. Tag them or run!",
-  ghost_step: "Fires on pickup — auto invisibility for 4s. Slip right past the chaser.",
+  ghost_step: "Fires on pickup — invisible for 4s AND jumps up straight through platforms. Escape vertically!",
   blink_dash: "Fires on pickup — warps you ~200px forward instantly.",
   mirror_decoy: "Fires on pickup — spawns a running fake clone for 5s.",
   safe_bubble: "Fires on pickup — auto shield for 10s, blocks one tag pass. Play aggressive!",
@@ -224,13 +224,27 @@ function drawScene(type: PowerUpType, ctx: CanvasRenderingContext2D, W: number, 
       break;
     }
     case "ghost_step": {
-      // YOU fades to 0.28 alpha (exact game value), IT runs past confused
+      // YOU fades to 0.28 alpha (exact game value) and hops up THROUGH
+      // the platform while ghosted; IT stays stuck below.
       const loop = 3.2;
       const lt = t % loop;
       const ghost = lt > 0.6 && lt < 2.5;
       const fade = ghost ? 0.28 : lt < 0.6 ? 1 - (lt / 0.6) * 0.72 : 0.28 + ((lt - 2.5) / 0.7) * 0.72;
+      const rise = ghost ? Math.sin(((lt - 0.6) / 1.9) * Math.PI) * 96 : 0;
       const youX = W / 2 - 10 + Math.sin(lt * 1.2) * 6;
+      const youY = groundY - rise;
       const itX = lt < 1.6 ? 20 + (lt / 1.6) * (W - 60) : 20 + ((3.2 - lt) / 1.6) * (W - 60);
+      // demo platform bar
+      const platY = groundY - 64;
+      ctx.save();
+      ctx.fillStyle = "#78350F";
+      ctx.fillRect(W * 0.15, platY, W * 0.7, 14);
+      ctx.fillStyle = "#22C55E";
+      ctx.fillRect(W * 0.15, platY, W * 0.7, 5);
+      ctx.strokeStyle = "#0E0C22";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(W * 0.15, platY, W * 0.7, 14);
+      ctx.restore();
       drawCartoonPlayer(ctx, itX, groundY + 6, IT_COLOR, true, false, { x: itX < W / 2 ? 1 : -1, y: 0 }, "IT");
       if (ghost) {
         ctx.save();
@@ -242,9 +256,9 @@ function drawScene(type: PowerUpType, ctx: CanvasRenderingContext2D, W: number, 
       }
       ctx.save();
       ctx.globalAlpha = Math.max(0.28, Math.min(1, fade));
-      drawCartoonPlayer(ctx, youX, groundY, YOU_COLOR, false, false, { x: 1, y: 0 }, ghost ? "YOU …" : "YOU 👻");
+      drawCartoonPlayer(ctx, youX, youY, YOU_COLOR, false, false, { x: 1, y: 0 }, ghost ? "YOU …" : "YOU 👻");
       ctx.restore();
-      drawPopup(ctx, W / 2, 26, ghost ? "INVISIBLE — IT RUNS PAST!" : "GHOST STEP FADING…", "#B0C4DE");
+      drawPopup(ctx, W / 2, 26, ghost ? "PHASES UP THROUGH PLATFORMS!" : "GHOST STEP FADING…", "#B0C4DE");
       break;
     }
     case "blink_dash": {
