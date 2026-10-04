@@ -46,6 +46,8 @@ export interface PlaygroundSnapshot {
   aliveCount: number;
   decoys: number;
   stickyPatches: number;
+  stickySpots: { x: number; y: number }[];
+  decoySpots: { x: number; y: number }[];
   orbs: number;
   winnerName: string | null;
   players: PlaygroundPlayerSnapshot[];
@@ -79,6 +81,8 @@ function buildSnapshot(
     aliveCount: game.players.filter((p) => p.alive).length,
     decoys: game.decoys.length,
     stickyPatches: game.stickyPatches.length,
+    stickySpots: game.stickyPatches.map((sp) => ({ x: Math.round(sp.x), y: Math.round(sp.y) })),
+    decoySpots: game.decoys.map((d) => ({ x: Math.round(d.x), y: Math.round(d.y) })),
     orbs: game.spawns.length,
     winnerName,
     players: game.players.map((p, idx) => ({
