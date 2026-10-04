@@ -323,11 +323,6 @@ export default function MainMenu() {
           <span>✨</span>
           <span><strong>See all abilities</strong> →</span>
         </Link>
-        <span style={{ color: "var(--border-arcade)" }}>•</span>
-        <Link to="/playground" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.95rem", color: "#2ED573", fontWeight: 800, textDecoration: "none" }}>
-          <span>🧪</span>
-          <span><strong>Test in playground</strong> →</span>
-        </Link>
       </div>
 
       <a
