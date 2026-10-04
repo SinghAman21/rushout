@@ -15,6 +15,7 @@ import { renderGame, renderHUD } from "../game/renderer.js";
 import { useLocalInputs } from "../hooks/useLocalInputs.js";
 import ArcadeButton from "../components/ArcadeButton.js";
 import Keycap from "../components/Keycap.js";
+import LandscapeGuard from "../components/LandscapeGuard.js";
 
 const MAP_KEYS = Object.keys(MAPS);
 
@@ -216,7 +217,8 @@ export default function LocalPlay() {
   // 2. ACTIVE CANVAS VIEW
   if (gameStarted) {
     return (
-      <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: "#0C0A1A" }}>
+      <LandscapeGuard active>
+        <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: "#0C0A1A" }}>
         <canvas
           ref={canvasRef}
           style={{
@@ -250,11 +252,11 @@ export default function LocalPlay() {
         </div>
 
 
-      </div>
+        </div>
+      </LandscapeGuard>
     );
   }
 
-  // 3. LOCAL PLAY SETUP VIEW
   return (
     <div className="arcade-bg">
       <div className="arcade-card" style={{ maxWidth: "780px" }}>

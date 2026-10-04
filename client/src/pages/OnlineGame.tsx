@@ -17,6 +17,7 @@ import {
 import { renderGame, renderHUD, extractPlayers } from "../game/renderer.js";
 import ArcadeButton from "../components/ArcadeButton.js";
 import TouchJoystick, { type JoystickDirection } from "../components/TouchJoystick.js";
+import LandscapeGuard from "../components/LandscapeGuard.js";
 
 const COLYSEUS_URL = import.meta.env.VITE_COLYSEUS_URL || "ws://localhost:2567";
 const ROOM_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -1070,7 +1071,8 @@ export default function OnlineGame() {
   // 4. ACTIVE PLAYING CANVAS VIEW
   if (status === "playing") {
     return (
-      <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: "#0C0A1A" }}>
+      <LandscapeGuard active>
+        <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: "#0C0A1A" }}>
         <canvas
           ref={canvasRef}
           style={{
@@ -1124,7 +1126,8 @@ export default function OnlineGame() {
             JUMP
           </button>
         </div>
-      </div>
+        </div>
+      </LandscapeGuard>
     );
   }
 
