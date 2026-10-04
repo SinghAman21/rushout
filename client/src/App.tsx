@@ -6,6 +6,7 @@ import CreateRoom from "./pages/CreateRoom.js";
 import JoinRoom from "./pages/JoinRoom.js";
 import RoomLobby from "./pages/RoomLobby.js";
 import OnlineGame from "./pages/OnlineGame.js";
+import Effects from "./pages/Effects.js";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/join-room" element={<JoinRoom />} />
         <Route path="/room/:roomId" element={<RoomLobby />} />
         <Route path="/online/:roomId" element={<OnlineGame />} />
+        <Route path="/effects" element={<Effects />} />
       </Routes>
       <Analytics />
     </>

@@ -950,7 +950,7 @@ function renderArcadePlatform(
 /* ==========================================================================
    EXPRESSIVE CARTOON PLAYER RENDERING
    ========================================================================== */
-function drawCartoonPlayer(
+export function drawCartoonPlayer(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
@@ -1165,7 +1165,7 @@ function renderActivePowerUpCard(
   ctx.restore();
 }
 
-function roundRectPath(
+export function roundRectPath(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,

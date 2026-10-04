@@ -318,6 +318,11 @@ export default function MainMenu() {
           <span>⏳</span>
           <span><strong>Last "IT" loses!</strong></span>
         </div>
+        <span style={{ color: "var(--border-arcade)" }}>•</span>
+        <Link to="/effects" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.95rem", color: "#9C88FF", fontWeight: 800, textDecoration: "none" }}>
+          <span>✨</span>
+          <span><strong>See all abilities</strong> →</span>
+        </Link>
       </div>
 
       <a
