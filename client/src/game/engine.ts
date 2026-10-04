@@ -71,8 +71,8 @@ export function createLocalGame(
   const players: PlayerState[] = playerNames.map((name, i) => ({
     id: `local_${i}`,
     name,
-    x: map.spawnPoints[i].x,
-    y: map.spawnPoints[i].y,
+    x: map.spawnPoints[i % map.spawnPoints.length].x,
+    y: map.spawnPoints[i % map.spawnPoints.length].y,
     vx: 0,
     vy: 0,
     isIt: i === 0,
@@ -271,10 +271,6 @@ export function updateLocalGame(
         player.activePowerUp = null;
       }
     }
-    if (player.powerUpCooldown > 0) {
-      player.powerUpCooldown -= dt;
-      if (player.powerUpCooldown < 0) player.powerUpCooldown = 0;
-    }
   }
 
   // Update sticky patches
@@ -308,9 +304,13 @@ export function updateLocalGame(
       speed *= SPEED_SURGE_MULTIPLIER;
     }
 
-    // Check sticky patches
+    // Check sticky patches (center-to-center, matches server)
+    const pcx = player.x + PLAYER_SIZE;
+    const pcy = player.y + PLAYER_SIZE;
     for (const patch of state.stickyPatches) {
-      if (dist(player, patch) < STICKY_PATCH_RADIUS) {
+      const sdx = pcx - patch.x;
+      const sdy = pcy - patch.y;
+      if (Math.sqrt(sdx * sdx + sdy * sdy) < STICKY_PATCH_RADIUS) {
         speed *= STICKY_SLOW_MULTIPLIER;
       }
     }
@@ -355,27 +355,24 @@ export function updateLocalGame(
     state.events = [];
   }
 
-  // Power-up pickup (auto-activate immediately)
+  // Power-up pickup (always fires instantly, no cooldown)
   for (const player of state.players) {
     for (let si = state.spawns.length - 1; si >= 0; si--) {
       const spawn = state.spawns[si];
       if (dist(player, spawn) < POWER_UP_PICKUP_RADIUS) {
-        if (player.powerUpCooldown <= 0) {
-          activatePowerUp(state, player, spawn.type);
-          const config = POWER_UP_CONFIGS[spawn.type];
-          player.powerUpCooldown = config.cooldownMs;
+        activatePowerUp(state, player, spawn.type);
+        const config = POWER_UP_CONFIGS[spawn.type];
 
-          state.events.push({
-            id: `ev_${Date.now()}_${Math.random()}`,
-            type: "pickup",
-            text: `+ ${config.icon} ${config.name.toUpperCase()}!`,
-            x: player.x + PLAYER_SIZE,
-            y: player.y - 12,
-            color: config.color,
-            remainingMs: 1400,
-            maxMs: 1400,
-          });
-        }
+        state.events.push({
+          id: `ev_${Date.now()}_${Math.random()}`,
+          type: "pickup",
+          text: `+ ${config.icon} ${config.name.toUpperCase()}!`,
+          x: player.x + PLAYER_SIZE,
+          y: player.y - 12,
+          color: config.color,
+          remainingMs: 1400,
+          maxMs: 1400,
+        });
         state.spawns.splice(si, 1);
       }
     }
@@ -468,7 +465,7 @@ export function updateLocalGame(
   }
 }
 
-function activatePowerUp(
+export function activatePowerUp(
   state: LocalGameState,
   player: PlayerState,
   type: PowerUpType
@@ -499,6 +496,18 @@ function activatePowerUp(
           remainingMs: POWER_UP_CONFIGS.freeze_pulse.durationMs,
           durationMs: POWER_UP_CONFIGS.freeze_pulse.durationMs,
         };
+      } else {
+        // Fizzle feedback: orb fires but nobody is in range
+        state.events.push({
+          id: `ev_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          type: "freeze",
+          text: "❄ NO ONE IN RANGE!",
+          x: player.x + PLAYER_SIZE,
+          y: player.y - 34,
+          color: "#00BFFF",
+          remainingMs: 1200,
+          maxMs: 1200,
+        });
       }
       break;
     }
@@ -546,8 +555,8 @@ function activatePowerUp(
     case "sticky_patch":
       state.stickyPatches.push({
         id: `sticky_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        x: player.x,
-        y: player.y,
+        x: player.x + PLAYER_SIZE,
+        y: player.y + PLAYER_SIZE,
         remainingMs: POWER_UP_CONFIGS.sticky_patch.durationMs,
       });
       break;

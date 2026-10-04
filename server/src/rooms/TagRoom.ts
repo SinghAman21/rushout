@@ -608,11 +608,6 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
           player.activePowerUpDuration = 0;
         }
       }
-      if (player.powerUpCooldown > 0) {
-        player.powerUpCooldown -= dt;
-        if (player.powerUpCooldown < 0) player.powerUpCooldown = 0;
-      }
-
       const pending = this.playerPendingInputs.get(sessionId);
       if (pending && pending.length > 0) {
         const next = pending.shift()!;
@@ -684,13 +679,9 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       const consumed: string[] = [];
       this.s.spawns.forEach((spawn, key) => {
         if (distSq(player.x + PLAYER_SIZE, player.y + PLAYER_SIZE, spawn.x, spawn.y) < POWER_UP_PICKUP_RADIUS * POWER_UP_PICKUP_RADIUS) {
-          if (player.powerUpCooldown <= 0) {
-            const type = POWER_UP_INDEX_TO_TYPE[spawn.type];
-            if (type) {
-              this.activatePowerUp(player, type);
-              const config = POWER_UP_CONFIGS[type as PowerUpType];
-              player.powerUpCooldown = config.cooldownMs;
-            }
+          const type = POWER_UP_INDEX_TO_TYPE[spawn.type];
+          if (type) {
+            this.activatePowerUp(player, type);
           }
           consumed.push(key);
         }
