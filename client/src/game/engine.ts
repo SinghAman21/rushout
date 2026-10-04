@@ -186,7 +186,7 @@ function isGrounded(player: { x: number; y: number; vy: number }, map: GameMap):
   return false;
 }
 
-function moveVertically(player: PlayerState, newY: number, map: GameMap) {
+function moveVertically(player: PlayerState, newY: number, map: GameMap, ghostUp = false) {
   const playerH = PLAYER_SIZE * 2;
   const oldY = player.y;
 
@@ -200,7 +200,20 @@ function moveVertically(player: PlayerState, newY: number, map: GameMap) {
         return;
       }
     }
-  } else {
+    // A ghost that phased up inside a platform (jump peaked or effect
+    // expired mid-phase) lands on top instead of getting stuck.
+    let landY = Infinity;
+    for (const o of map.obstacles) {
+      if (rectCollides(player.x, player.y, playerH, playerH, o.x, o.y, o.w, o.h)) {
+        landY = Math.min(landY, o.y - playerH);
+      }
+    }
+    if (landY !== Infinity) {
+      player.y = landY;
+      player.vy = 0;
+      return;
+    }
+  } else if (!ghostUp) {
     for (const o of map.obstacles) {
       const obstacleBottom = o.y + o.h;
       if (horizontallyOverlaps(player.x, o) && oldY >= obstacleBottom && newY <= obstacleBottom) {
@@ -212,6 +225,9 @@ function moveVertically(player: PlayerState, newY: number, map: GameMap) {
   }
 
   if (!collidesWithObstacles(player.x, newY, map.obstacles)) {
+    player.y = newY;
+  } else if (ghostUp && player.vy < 0) {
+    // Ghost rises straight through platforms (one-way: still lands from above).
     player.y = newY;
   } else {
     player.vy = 0;
@@ -298,6 +314,7 @@ export function updateLocalGame(
 
     // Check if frozen
     const isFrozen = player.activePowerUp?.type === "freeze_pulse";
+    const isGhost = player.activePowerUp?.type === "ghost_step";
 
     let speed = PLAYER_MOVE_SPEED;
     if (player.activePowerUp?.type === "speed_surge") {
@@ -337,7 +354,7 @@ export function updateLocalGame(
     }
 
     const newY = player.y + player.vy * frameScale;
-    moveVertically(player, newY, state.map);
+    moveVertically(player, newY, state.map, isGhost);
 
     // Clamp to map
     player.x = Math.max(0, Math.min(state.map.width - PLAYER_SIZE * 2, player.x));
@@ -552,13 +569,19 @@ export function activatePowerUp(
       };
       break;
 
-    case "sticky_patch":
+    case "sticky_patch": {
+      // Drop behind the runner (outside the slow radius) so the
+      // dropper isn't instantly slowed by their own goo.
+      const behind = STICKY_PATCH_RADIUS + PLAYER_SIZE;
+      const px = player.x + PLAYER_SIZE - player.facing.x * behind;
+      const py = player.y + PLAYER_SIZE - player.facing.y * behind;
       state.stickyPatches.push({
         id: `sticky_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        x: player.x + PLAYER_SIZE,
-        y: player.y + PLAYER_SIZE,
+        x: Math.max(0, Math.min(state.map.width, px)),
+        y: Math.max(0, Math.min(state.map.height, py)),
         remainingMs: POWER_UP_CONFIGS.sticky_patch.durationMs,
       });
       break;
+    }
   }
 }

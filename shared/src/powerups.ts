@@ -32,7 +32,7 @@ export const POWER_UP_CONFIGS: Record<PowerUpType, PowerUpConfig> = {
   ghost_step: {
     type: "ghost_step",
     name: "Ghost Step",
-    description: "Brief invisibility",
+    description: "Brief invisibility — jump up through platforms",
     durationMs: 4000,
     cooldownMs: 12000,
     color: "#B0C4DE",

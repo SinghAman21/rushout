@@ -133,7 +133,7 @@ function isGrounded(player: { x: number; y: number; vy: number }, map: GameMap):
   return false;
 }
 
-function moveVertically(player: PlayerSchema, newY: number, map: GameMap) {
+function moveVertically(player: PlayerSchema, newY: number, map: GameMap, ghostUp = false) {
   const playerH = PLAYER_SIZE * 2;
   const oldY = player.y;
 
@@ -147,7 +147,20 @@ function moveVertically(player: PlayerSchema, newY: number, map: GameMap) {
         return;
       }
     }
-  } else {
+    // A ghost that phased up inside a platform (jump peaked or effect
+    // expired mid-phase) lands on top instead of getting stuck.
+    let landY = Infinity;
+    for (const o of map.obstacles) {
+      if (rectCollides(player.x, player.y, playerH, playerH, o.x, o.y, o.w, o.h)) {
+        landY = Math.min(landY, o.y - playerH);
+      }
+    }
+    if (landY !== Infinity) {
+      player.y = landY;
+      player.vy = 0;
+      return;
+    }
+  } else if (!ghostUp) {
     for (const o of map.obstacles) {
       const obstacleBottom = o.y + o.h;
       if (horizontallyOverlaps(player.x, o) && oldY >= obstacleBottom && newY <= obstacleBottom) {
@@ -159,6 +172,9 @@ function moveVertically(player: PlayerSchema, newY: number, map: GameMap) {
   }
 
   if (!collidesWithObstacles(player.x, newY, map.obstacles)) {
+    player.y = newY;
+  } else if (ghostUp && player.vy < 0) {
+    // Ghost rises straight through platforms (one-way: still lands from above).
     player.y = newY;
   } else {
     player.vy = 0;
@@ -630,6 +646,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       const canJump = (this.jumpBuffer.get(sessionId) ?? 0) > 0;
 
       const isFrozen = player.activePowerUpType === POWER_UP_TYPE_INDEX.freeze_pulse;
+      const isGhost = player.activePowerUpType === POWER_UP_TYPE_INDEX.ghost_step;
 
       let speed = PLAYER_MOVE_SPEED;
       if (player.activePowerUpType === POWER_UP_TYPE_INDEX.speed_surge) {
@@ -667,7 +684,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       }
 
       const newY = player.y + player.vy;
-      moveVertically(player, newY, this.map);
+      moveVertically(player, newY, this.map, isGhost);
 
       player.x = Math.max(0, Math.min(this.map.width - PLAYER_SIZE * 2, player.x));
       player.y = Math.max(0, Math.min(this.map.height - PLAYER_SIZE * 2, player.y));
@@ -807,10 +824,15 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       }
 
       case "sticky_patch": {
+        // Drop behind the runner (outside the slow radius) so the
+        // dropper isn't instantly slowed by their own goo.
+        const behind = STICKY_PATCH_RADIUS + PLAYER_SIZE;
+        const px = player.x + PLAYER_SIZE - player.facingX * behind;
+        const py = player.y + PLAYER_SIZE - player.facingY * behind;
         const patch = new StickyPatchSchema();
         patch.id = `sticky_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        patch.x = player.x + PLAYER_SIZE;
-        patch.y = player.y + PLAYER_SIZE;
+        patch.x = Math.max(0, Math.min(this.map.width, px));
+        patch.y = Math.max(0, Math.min(this.map.height, py));
         patch.remainingMs = config.durationMs;
         this.s.stickyPatches.set(patch.id, patch);
         break;
