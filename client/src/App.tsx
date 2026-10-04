@@ -7,6 +7,7 @@ import JoinRoom from "./pages/JoinRoom.js";
 import RoomLobby from "./pages/RoomLobby.js";
 import OnlineGame from "./pages/OnlineGame.js";
 import Effects from "./pages/Effects.js";
+import Playground from "./pages/Playground.js";
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/room/:roomId" element={<RoomLobby />} />
         <Route path="/online/:roomId" element={<OnlineGame />} />
         <Route path="/effects" element={<Effects />} />
+        <Route path="/playground" element={<Playground />} />
       </Routes>
       <Analytics />
     </>
