@@ -11,7 +11,10 @@
     "experimentalDecorators": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "useDefineForClassFields": false
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

@@ -13,10 +13,13 @@ import {
   PLAYER_SIZE,
   POWER_UP_INDEX_TO_TYPE,
   SPEED_SURGE_MULTIPLIER,
+  POWER_UP_CONFIGS,
 } from "rushout-shared";
 import { renderGame, renderHUD, extractPlayers } from "../game/renderer.js";
 import ArcadeButton from "../components/ArcadeButton.js";
 import TouchJoystick, { type JoystickDirection } from "../components/TouchJoystick.js";
+import MapPreview from "../components/MapPreview.js";
+import {playTone} from "../sound.js";
 import LandscapeGuard from "../components/LandscapeGuard.js";
 
 const COLYSEUS_URL = import.meta.env.VITE_COLYSEUS_URL || "ws://localhost:2567";
@@ -106,6 +109,7 @@ function isGrounded(player: { x: number; y: number; vy: number }, map: GameMap) 
 }
 
 function movePredictedVertically(player: PlayerState, newY: number, map: GameMap) {
+  const ghostUp=player.activePowerUp?.type === "ghost_step";
   const playerH = PLAYER_SIZE * 2;
   const oldY = player.y;
 
@@ -119,7 +123,7 @@ function movePredictedVertically(player: PlayerState, newY: number, map: GameMap
         return;
       }
     }
-  } else {
+  } else if (!ghostUp) {
     for (const o of map.obstacles) {
       const obstacleBottom = o.y + o.h;
       if (horizontallyOverlaps(player.x, o) && oldY >= obstacleBottom && newY <= obstacleBottom) {
@@ -130,7 +134,7 @@ function movePredictedVertically(player: PlayerState, newY: number, map: GameMap
     }
   }
 
-  if (!collidesWithObstacles(player.x, newY, map.obstacles)) {
+  if ((ghostUp && player.vy<0) || !collidesWithObstacles(player.x, newY, map.obstacles)) {
     player.y = newY;
   } else {
     player.vy = 0;
@@ -250,6 +254,12 @@ export default function OnlineGame() {
   const mapName = roomOptions.mapName ?? "arena";
   const powerUpsEnabled = roomOptions.powerUpsEnabled !== false;
 
+  const endedRef = useRef(false);
+  const [lobbyMap,setLobbyMap]=useState(mapName);
+  const [lobbyDuration,setLobbyDuration]=useState(roundLength);
+  const [lobbyPowerUps,setLobbyPowerUps]=useState(powerUpsEnabled);
+  const [countdown,setCountdown]=useState(3);
+  const [livePlayers,setLivePlayers]=useState<PlayerState[]>([]);
   const [status, setStatus] = useState<"connecting" | "lobby" | "playing" | "ended">("connecting");
   const [players, setPlayers] = useState<PlayerState[]>([]);
   const [roundResult, setRoundResult] = useState<any>(null);
@@ -311,6 +321,8 @@ export default function OnlineGame() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    const timeout = window.setTimeout(()=>{if(!roomRef.current){setConnectionError("The server is taking too long. Try again or practice offline.");}},10000);
     const connect = async () => {
       if (connectedRef.current) return;
       connectedRef.current = true;
@@ -324,7 +336,8 @@ export default function OnlineGame() {
         if (isHost) {
           try {
             room = await client.join("tag_room", joinOptions);
-          } catch {
+          } catch (error) {
+            if(roomOptions.created) throw error;
             room = await client.create("tag_room", {
               ...joinOptions,
               config: {
@@ -338,7 +351,12 @@ export default function OnlineGame() {
           room = await client.join("tag_room", joinOptions);
         }
 
+        if(disposed){void room.leave();return;}
+        clearTimeout(timeout);
+        sessionStorage.setItem(`tag-room-options:${publicRoomCode}`,JSON.stringify({...roomOptions,created:true}));
         roomRef.current = room;
+        room.onLeave(()=>{if(!disposed){setConnectionError("Connection closed. Rejoin with your room code, or start a new party.");setStatus("connecting");}});
+        room.onError(()=>{if(!disposed){setConnectionError("Connection interrupted. Try again to rejoin your party.");setStatus("connecting");}});
         setActualRoomId(publicRoomCode);
         setConnectionError("");
 
@@ -357,7 +375,8 @@ export default function OnlineGame() {
         const syncState = (state: any) => {
           const gameStarted = !!state.gameStarted;
           setServerHostId(state.hostId ?? "");
-          setStatus(gameStarted ? "playing" : "lobby");
+          setLobbyMap(state.mapName ?? mapName); setLobbyDuration(state.roundLengthNum ?? roundLength); setLobbyPowerUps(state.powerUpsEnabled !== false);
+          if(!endedRef.current)setStatus(gameStarted ? "playing" : "lobby");
 
           // During gameplay the canvas reads Colyseus' patched room.state directly.
           // Updating React player state for every patch causes avoidable rerenders/stutter.
@@ -396,6 +415,7 @@ export default function OnlineGame() {
         room.send("requestLobbyState");
 
         room.onMessage("gameStarted", () => {
+          endedRef.current=false; playTone("start");
           setRoundResult(null);
           setHudTimeLeft(roundLength);
           smoothedPlayersRef.current.clear();
@@ -416,13 +436,15 @@ export default function OnlineGame() {
           setStatus("playing");
         });
 
+        room.onMessage("effect", (data:any)=>{eventsRef.current.push({...data,id:`effect_${Date.now()}`,type:"pickup",remainingMs:1400,maxMs:1400});});
         room.onMessage("tag", (data: any) => {
+          playTone("tag");
           eventsRef.current.push({
             id: `ev_${Date.now()}`,
             type: "tag",
             text: "⚡ PRESSURE PASSED!",
-            x: 800,
-            y: 450,
+            x: extractPlayers(room.state.players).find(p=>p.id===data.taggedId)?.x ?? 800,
+            y: (extractPlayers(room.state.players).find(p=>p.id===data.taggedId)?.y ?? 450)-32,
             color: "#EF4444",
             remainingMs: 1500,
             maxMs: 1500,
@@ -430,6 +452,7 @@ export default function OnlineGame() {
         });
 
         room.onMessage("roundEnd", (data: any) => {
+          endedRef.current=true; playTone("end");
           setRoundResult(data);
           setHudTimeLeft(0);
           setStatus("ended");
@@ -437,7 +460,9 @@ export default function OnlineGame() {
 
       } catch (err) {
         console.error("Failed to connect:", err);
-        setConnectionError(err instanceof Error ? err.message : "Unable to connect to room");
+        if(disposed)return;
+        clearTimeout(timeout);
+        setConnectionError("Room unavailable, full, or already playing. Check the code with your host and try again.");
         setStatus("connecting");
       }
     };
@@ -445,8 +470,9 @@ export default function OnlineGame() {
     connect();
 
     return () => {
+      disposed=true; clearTimeout(timeout); connectedRef.current=false;
       gameFrameRef.current = null;
-      roomRef.current?.leave();
+      void roomRef.current?.leave();
       clientRef.current = null;
       roomRef.current = null;
       cancelAnimationFrame(rafRef.current);
@@ -490,7 +516,8 @@ export default function OnlineGame() {
 
     window.addEventListener("keydown", handleDown);
     window.addEventListener("keyup", handleUp);
-    window.addEventListener("blur", releaseTouchControls);
+    const resetKeys=()=>{keysRef.current={}; releaseTouchControls();transmitInput(true);};
+    window.addEventListener("blur", resetKeys);
 
     const inputInterval = setInterval(() => transmitInput(false), 33);
 
@@ -524,7 +551,9 @@ export default function OnlineGame() {
         e.remainingMs -= frameDelta;
         return e.remainingMs > 0;
       });
-      const nextHudTime = Math.max(0, Math.ceil(state.roundTimeRemaining ?? 0));
+      const remaining=state.roundTimeRemaining ?? 0;
+      setCountdown(Math.max(0,Math.ceil(remaining-(state.roundLengthNum??state.roundLength??roundLength))));
+      const nextHudTime = Math.max(0, Math.ceil(Math.min(remaining,state.roundLengthNum??state.roundLength??roundLength)));
       setHudTimeLeft(current => current === nextHudTime ? current : nextHudTime);
 
       const input = status === "playing"
@@ -602,7 +631,7 @@ export default function OnlineGame() {
           tickHistoryRef.current.shift();
         }
 
-        if (predictedStateRef.current) {
+        if (predictedStateRef.current && state.roundTimeRemaining <= (state.roundLengthNum??state.roundLength??roundLength)) {
           const res = stepPlayerPhysics(predictedStateRef.current, input, canJump, map);
           predictedStateRef.current = res.player;
           if (res.jumpConsumed) {
@@ -653,7 +682,9 @@ export default function OnlineGame() {
         }
       }
 
+      setLivePlayers(previous=> JSON.stringify(previous.map(p=>[p.id,p.isIt,p.activePowerUp?.type,Math.ceil((p.activePowerUp?.remainingMs??0)/200)]))===JSON.stringify(playerList.map(p=>[p.id,p.isIt,p.activePowerUp?.type,Math.ceil((p.activePowerUp?.remainingMs??0)/200)]))?previous:playerList);
       const renderState = {
+        localPlayerId: room.sessionId,
         players: playerList,
         spawns: state.spawns,
         stickyPatches: state.stickyPatches,
@@ -668,11 +699,10 @@ export default function OnlineGame() {
         events: eventsRef.current,
       };
 
-      const myIndex = playerList.findIndex(p => p.id === room.sessionId || p.name === myName);
 
       // Unified responsive renderer
       renderGame(ctx, renderState, canvas.width, canvas.height, map);
-      renderHUD(ctx, renderState, canvas.width, myIndex >= 0 ? myIndex : 0);
+
 
       if (status === "playing") {
         rafRef.current = requestAnimationFrame(gameLoop);
@@ -684,7 +714,7 @@ export default function OnlineGame() {
     return () => {
       window.removeEventListener("keydown", handleDown);
       window.removeEventListener("keyup", handleUp);
-      window.removeEventListener("blur", releaseTouchControls);
+      window.removeEventListener("blur", resetKeys);
       releaseTouchControls();
       clearInterval(inputInterval);
       cancelAnimationFrame(rafRef.current);
@@ -697,439 +727,17 @@ export default function OnlineGame() {
     roomRef.current?.send("startGame");
   }, []);
 
-  const handleCopyCode = () => {
+  const handleCopyCode = async () => {
     if (!actualRoomId) return;
-    navigator.clipboard?.writeText(actualRoomId);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try { await navigator.clipboard.writeText(actualRoomId); setCopied(true); } catch { setCopied(false); }
   };
 
-  // 1. CONNECTING VIEW
-  if (status === "connecting") {
-    return (
-      <div className="arcade-bg">
-        <div className="arcade-card" style={{ maxWidth: "460px", textAlign: "center" }}>
-          <div style={{ fontSize: "3rem", marginBottom: "1rem" }} className="arcade-btn-pulse">
-            📡
-          </div>
-          <h2 style={{
-            fontFamily: "'Fredoka', sans-serif",
-            fontSize: "2rem",
-            fontWeight: 800,
-            color: "#FFFFFF",
-            margin: "0 0 0.8rem 0",
-          }}>
-            Connecting to Arena...
-          </h2>
-          <p style={{ color: "var(--text-dim)", fontSize: "0.95rem", marginBottom: "1.5rem" }}>
-            {connectionError || `Contacting Colyseus server on ${COLYSEUS_URL}`}
-          </p>
-
-          {connectionError ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              <div style={{
-                background: "rgba(255, 71, 87, 0.15)",
-                border: "2px solid var(--arcade-red)",
-                borderRadius: "10px",
-                color: "var(--arcade-red)",
-                padding: "0.75rem",
-                fontWeight: 700,
-                fontSize: "0.9rem",
-              }}>
-                Could not reach the game server. Ensure <code>npm run dev:server</code> is running!
-              </div>
-              <ArcadeButton color="secondary" size="md" onClick={() => navigate("/")}>
-                ← BACK TO MENU
-              </ArcadeButton>
-            </div>
-          ) : (
-            <div style={{
-              display: "inline-block",
-              padding: "0.6rem 1.4rem",
-              background: "var(--bg-card-inner)",
-              border: "2px solid var(--border-arcade)",
-              borderRadius: "999px",
-              color: "var(--arcade-yellow)",
-              fontWeight: 800,
-              fontSize: "0.9rem",
-            }}>
-              ESTABLISHING WEBSOCKET CONNECTION...
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // 2. ROUND OVER VIEW
-  if (status === "ended" && roundResult) {
-    const loserPlayer = roundResult.scores?.find((p: any) => p.id === roundResult.loserId) ?? null;
-
-    return (
-      <div className="arcade-bg">
-        <div className="arcade-card" style={{ maxWidth: "520px", textAlign: "center" }}>
-          <div style={{
-            display: "inline-block",
-            background: "var(--arcade-yellow)",
-            color: "#3A2800",
-            padding: "0.3rem 1.2rem",
-            borderRadius: "999px",
-            border: "3px solid #0D0B1C",
-            fontWeight: 900,
-            fontSize: "0.85rem",
-            letterSpacing: "0.08em",
-            boxShadow: "0 4px 0 #D4A30B",
-            marginBottom: "1rem",
-          }}>
-            MATCH COMPLETE!
-          </div>
-
-          <h1 style={{
-            fontFamily: "'Fredoka', sans-serif",
-            fontSize: "2.8rem",
-            fontWeight: 900,
-            color: "#FFFFFF",
-            margin: "0 0 1.3rem 0",
-            textShadow: "0 4px 0 #0D0B1C",
-          }}>
-            ROUND OVER!
-          </h1>
-
-          <div style={{
-            background: "var(--bg-card-inner)",
-            border: `3px solid ${loserPlayer?.color ?? "#FFFFFF"}`,
-            borderRadius: "14px",
-            padding: "1.1rem",
-            marginBottom: "1.6rem",
-            boxShadow: "0 5px 0 #0D0B1C",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: "0.55rem",
-          }}>
-            <div style={{
-              width: "58px",
-              height: "66px",
-              background: loserPlayer?.color ?? "#FFFFFF",
-              border: "4px solid #0E0C22",
-              borderRadius: "24px 24px 17px 17px",
-              boxShadow: "inset 0 -18px 0 rgba(0, 0, 0, 0.22), 0 5px 0 rgba(0, 0, 0, 0.3)",
-              position: "relative",
-            }}>
-              <span style={{
-                position: "absolute",
-                left: "13px",
-                top: "22px",
-                width: "11px",
-                height: "11px",
-                background: "#FFFFFF",
-                border: "2px solid #0E0C22",
-                borderRadius: "50%",
-              }} />
-              <span style={{
-                position: "absolute",
-                right: "13px",
-                top: "22px",
-                width: "11px",
-                height: "11px",
-                background: "#FFFFFF",
-                border: "2px solid #0E0C22",
-                borderRadius: "50%",
-              }} />
-            </div>
-            <div style={{ color: "#FFFFFF", fontWeight: 900, fontSize: "1.1rem" }}>
-              {loserPlayer?.name ?? roundResult.loserName ?? "Player"}
-            </div>
-            <div style={{
-              color: "var(--arcade-red)",
-              fontWeight: 900,
-              fontSize: "1rem",
-              letterSpacing: "0.12em",
-            }}>
-              LOSER
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
-            {amHost && (
-              <ArcadeButton color="green" size="lg" fullWidth onClick={handleStartGame} icon="🔄">
-                REMATCH!
-              </ArcadeButton>
-            )}
-            <ArcadeButton color="secondary" size="lg" onClick={() => navigate("/")} icon="🏠">
-              LEAVE
-            </ArcadeButton>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 3. MULTIPLAYER LOBBY VIEW
-  if (status === "lobby") {
-    return (
-      <div className="arcade-bg">
-        <div className="arcade-card" style={{ maxWidth: "640px" }}>
-          {/* Header & Room Code Box */}
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: "1rem",
-            marginBottom: "1.8rem",
-            borderBottom: "3px solid var(--border-arcade)",
-            paddingBottom: "1.2rem",
-          }}>
-            <div>
-              <div style={{
-                display: "inline-block",
-                background: "rgba(30, 144, 255, 0.2)",
-                color: "#4BA7FF",
-                padding: "0.2rem 0.6rem",
-                borderRadius: "6px",
-                border: "2px solid #1E90FF",
-                fontWeight: 800,
-                fontSize: "0.75rem",
-                marginBottom: "0.3rem",
-              }}>
-                ONLINE MATCH LOBBY
-              </div>
-              <h1 style={{
-                fontFamily: "'Fredoka', sans-serif",
-                fontSize: "1.8rem",
-                fontWeight: 800,
-                color: "#FFFFFF",
-                margin: 0,
-              }}>
-                Arena: {MAPS[mapName]?.name || "Skyline Stage"}
-              </h1>
-            </div>
-
-            {/* Room Code Badge with Copy */}
-            <div style={{
-              background: "var(--bg-card-inner)",
-              border: "3px solid #0D0B1C",
-              borderRadius: "14px",
-              padding: "0.5rem 1rem",
-              display: "flex",
-              alignItems: "center",
-              gap: "0.75rem",
-              boxShadow: "0 4px 0 #0D0B1C",
-            }}>
-              <div>
-                <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 800, textTransform: "uppercase" }}>
-                  ROOM CODE
-                </div>
-                <div style={{
-                  fontFamily: "'Outfit', monospace",
-                  fontSize: "1.6rem",
-                  fontWeight: 900,
-                  color: "var(--arcade-yellow)",
-                  letterSpacing: "0.15em",
-                  lineHeight: 1,
-                }}>
-                  {actualRoomId}
-                </div>
-              </div>
-              <button
-                onClick={handleCopyCode}
-                className="arcade-chip"
-                style={{ padding: "0.45rem 0.8rem", fontSize: "0.85rem" }}
-              >
-                {copied ? "✅ COPIED!" : "📋 COPY"}
-              </button>
-            </div>
-          </div>
-
-          {/* Participants Counter */}
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: "0.8rem",
-          }}>
-            <span style={{
-              fontSize: "0.9rem",
-              fontWeight: 800,
-              color: "var(--text-dim)",
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-            }}>
-              PARTICIPANTS ({players.length}/13)
-            </span>
-            <span style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-              {players.length < 2 ? "Waiting for players to join..." : "Ready to launch!"}
-            </span>
-          </div>
-
-          {/* Participant Cards Grid */}
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-            gap: "0.75rem",
-            marginBottom: "2rem",
-            maxHeight: "360px",
-            overflowY: "auto",
-            paddingRight: "4px",
-          }}>
-            {players.map(p => {
-              const isMe = p.name === myName;
-              const isServerHost = p.id === serverHostId;
-
-              return (
-                <div
-                  key={p.id}
-                  style={{
-                    background: "var(--bg-card-inner)",
-                    border: `3px solid ${p.color}`,
-                    borderRadius: "14px",
-                    padding: "0.8rem",
-                    boxShadow: `0 4px 0 ${p.color}40, 0 6px 0 #0D0B1C`,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.6rem",
-                  }}
-                >
-                  <span style={{
-                    width: "16px",
-                    height: "16px",
-                    borderRadius: "50%",
-                    background: p.color,
-                    border: "2px solid #FFFFFF",
-                    flexShrink: 0,
-                  }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontWeight: 800,
-                      fontSize: "1rem",
-                      color: "#FFFFFF",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}>
-                      {p.name} {isMe && "(YOU)"}
-                    </div>
-                    <div style={{ display: "flex", gap: "0.3rem", marginTop: "0.2rem" }}>
-                      {isServerHost && (
-                        <span style={{
-                          background: "var(--arcade-yellow)",
-                          color: "#3A2800",
-                          fontSize: "0.65rem",
-                          fontWeight: 900,
-                          padding: "0.1rem 0.4rem",
-                          borderRadius: "4px",
-                        }}>
-                          HOST
-                        </span>
-                      )}
-
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Bottom Actions */}
-          <div style={{ display: "flex", gap: "1rem" }}>
-            {amHost ? (
-              <ArcadeButton
-                color="green"
-                size="lg"
-                fullWidth
-                onClick={handleStartGame}
-                disabled={players.length < 1}
-                icon="▶"
-              >
-                START GAME
-              </ArcadeButton>
-            ) : (
-              <div style={{
-                flex: 1,
-                background: "var(--bg-card-inner)",
-                border: "3px solid #0D0B1C",
-                borderRadius: "16px",
-                padding: "0.85rem",
-                textAlign: "center",
-                color: "var(--text-dim)",
-                fontWeight: 700,
-              }}>
-                ⏳ WAITING FOR HOST TO START...
-              </div>
-            )}
-
-            <ArcadeButton color="secondary" size="lg" onClick={() => navigate("/")}>
-              LEAVE
-            </ArcadeButton>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 4. ACTIVE PLAYING CANVAS VIEW
-  if (status === "playing") {
-    return (
-      <LandscapeGuard active>
-        <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: "#0C0A1A" }}>
-        <canvas
-          ref={canvasRef}
-          style={{
-            display: "block",
-            width: "100vw",
-            height: "100vh",
-            background: "#0C0A1A",
-            cursor: "none",
-          }}
-        />
-        <div style={{
-          position: "fixed",
-          top: "0.75rem",
-          left: "50%",
-          transform: "translateX(-50%)",
-          zIndex: 50,
-          minWidth: "110px",
-          padding: "0.25rem 0.85rem",
-          background: hudTimeLeft <= 10 ? "var(--arcade-red)" : "#1E1B4B",
-          border: `3px solid ${hudTimeLeft <= 10 ? "var(--arcade-yellow)" : "#383464"}`,
-          borderRadius: "10px",
-          boxShadow: "0 4px 0 #0D0B1C",
-          color: "var(--arcade-yellow)",
-          fontFamily: "'Outfit', monospace",
-          fontSize: "1.35rem",
-          fontWeight: 900,
-          textAlign: "center",
-          pointerEvents: "none",
-        }}>
-          {Math.floor(hudTimeLeft / 60)}:{String(hudTimeLeft % 60).padStart(2, "0")}
-        </div>
-
-        <div className="touch-controls" aria-label="Touch game controls">
-          <TouchJoystick
-            direction={joystickDirection}
-            onDirectionChange={setJoystickMovement}
-          />
-          <button
-            type="button"
-            className="touch-control-button touch-control-button--jump"
-            aria-label="Jump"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.currentTarget.setPointerCapture(event.pointerId);
-              setTouchControl("up", true);
-            }}
-            onPointerUp={() => setTouchControl("up", false)}
-            onPointerCancel={() => setTouchControl("up", false)}
-            onLostPointerCapture={() => setTouchControl("up", false)}
-          >
-            JUMP
-          </button>
-        </div>
-        </div>
-      </LandscapeGuard>
-    );
-  }
-
+  const canStart = players.length >= 2 && players.every(p => p.id === serverHostId || p.ready);
+  const me = players.find(p=>p.id===roomRef.current?.sessionId);
+  const leave = () => navigate('/');
+  if(status==='connecting') return <main className="arcade-bg"><section className="arcade-card text-center" style={{maxWidth:520}}><span className="eyebrow">ONLINE / CONNECTION</span><h1 className="my-4 text-3xl">{connectionError?'Couldn’t enter the room':'Opening the gates…'}</h1><p role={connectionError?'alert':'status'} className="muted mb-6">{connectionError || 'Connecting to your party. This should only take a moment.'}</p><div className="result-actions">{connectionError&&<ArcadeButton color="yellow" onClick={()=>window.location.reload()}>Try again</ArcadeButton>}<ArcadeButton color="secondary" onClick={()=>navigate('/join-room')}>Enter another code</ArcadeButton><ArcadeButton color="secondary" onClick={leave}>Leave</ArcadeButton></div></section></main>;
+  if(status==='ended'&&roundResult)return <main className="arcade-bg"><section className="arcade-card text-center" style={{maxWidth:680}}><span className="eyebrow">TIME’S UP / PARTY STILL ON</span><h1 className="result-title">{roundResult.reason?"Chase interrupted":`${roundResult.loserName} got caught!`}</h1><p className="muted mb-6">{roundResult.reason || 'Holding IT at zero means you’re out. Everyone else escaped.'}</p><div className="flex flex-wrap justify-center gap-6 mb-8">{roundResult.scores?.map((p:any)=><div key={p.id}><div className="mini-runner" style={{background:p.color}}>{p.wasIt?'IT':'✓'}</div><p>{p.name}</p><small className="muted">{p.wasIt?'Caught':'Escaped'}</small></div>)}</div><div className="result-actions">{amHost?<ArcadeButton color="green" disabled={!canStart} onClick={handleStartGame}>Rematch</ArcadeButton>:<p className="muted">The host can start a rematch.</p>}<ArcadeButton color="secondary" onClick={()=>{endedRef.current=false;setRoundResult(null);setStatus('lobby');roomRef.current?.send('requestLobbyState');}}>Return to lobby</ArcadeButton><ArcadeButton color="secondary" onClick={leave}>Leave</ArcadeButton></div>{players.length<2&&<p className="muted mt-4">Invite another runner for the next round.</p>}</section></main>;
+  if(status==='lobby')return <main className="arcade-bg"><section className="arcade-card setup-shell" style={{maxWidth:800}}><header className="setup-header"><div><span className="eyebrow">ONLINE / {players.length} OF 13 RUNNERS</span><h1>Your party’s playground</h1><p className="muted">{amHost?'You’re the host. Start when your crew is ready.':'Get ready, then the host will start the chase.'}</p></div><ArcadeButton color="secondary" size="sm" onClick={leave}>Leave</ArcadeButton></header><div className="lobby-code"><div><small>INVITE CODE</small><strong>{actualRoomId}</strong></div><ArcadeButton color="yellow" size="sm" onClick={handleCopyCode}>{copied?'Copied!':'Copy code'}</ArcadeButton><ArcadeButton color="secondary" size="sm" onClick={async()=>{try{await navigator.clipboard.writeText(`${location.origin}/join-room?code=${actualRoomId}`);setCopied(true);}catch{setConnectionError('Copy the room code shown here to invite friends.');}}}>Copy invite link</ArcadeButton></div><p className="muted text-sm my-4">A/D or ←/→ to move · W, ↑ or Space to jump. Pass IT before time runs out. Pickups activate on contact.</p><div className="lobby-players">{players.map((p,i)=><div className="lobby-player" key={p.id}><div className="mini-runner" style={{background:p.color}}>P{i+1}</div><div><strong>{p.name}{p.id===roomRef.current?.sessionId?' · YOU':''}</strong><small>{p.id===serverHostId?'HOST':p.ready?'✓ READY':'Getting ready…'}</small></div></div>)}</div><section className="my-6"><MapPreview id={lobbyMap}/><p className="muted text-sm mt-2">{lobbyDuration}s rounds · {lobbyPowerUps?'Seven pickups enabled':'Pickups off'}</p>{amHost&&<details className="rules mt-4"><summary>Change arena and rules</summary><div className="choice-row my-3">{Object.entries(MAPS).map(([key,m])=><button key={key} className={`arcade-chip ${lobbyMap===key?'selected':''}`} onClick={()=>roomRef.current?.send('config',{mapName:key})}>{m.name}</button>)}</div><div className="choice-row">{[30,60,120].map(n=><button key={n} className={`arcade-chip ${lobbyDuration===n?'selected':''}`} onClick={()=>roomRef.current?.send('config',{roundLength:n})}>{n}s</button>)}</div><button className="arcade-chip mt-4" aria-pressed={lobbyPowerUps} onClick={()=>roomRef.current?.send('config',{powerUpsEnabled:!lobbyPowerUps})}>Pickups {lobbyPowerUps?'ON':'OFF'}</button></details>}</section><div className="result-actions">{amHost?<ArcadeButton color="green" disabled={!canStart} onClick={handleStartGame}>Start the chase →</ArcadeButton>:<ArcadeButton color={me?.ready?'secondary':'green'} onClick={()=>roomRef.current?.send('ready')}>{me?.ready?'Ready ✓ · Undo':'I’m ready'}</ArcadeButton>}</div><p role="status" className="muted mt-4 text-sm">{players.length<2?'Share the code to invite at least one other runner.':!canStart?'Waiting for every guest to get ready.':'Everyone’s ready. Let’s run!'}</p></section></main>;
+  if(status==='playing')return <LandscapeGuard active><div className="fixed inset-0 bg-[#0e0c1f]"><canvas ref={canvasRef} className="w-full h-full" aria-label="Online game arena"/><div className="game-topbar"><span className="muted text-sm">{actualRoomId}</span><div className={`game-time ${hudTimeLeft<=10?'urgent':''}`}>{Math.floor(hudTimeLeft/60)}:{String(hudTimeLeft%60).padStart(2,'0')}</div><ArcadeButton size="sm" color="secondary" onClick={leave}>Leave</ArcadeButton></div>{countdown>0&&<div className="countdown-overlay"><b>{countdown}</b><p>Find YOU. Get ready!</p><span>A/D + W or arrow keys · Pass IT before zero</span></div>}<div className="game-roster">{livePlayers.filter(p=>p.id===roomRef.current?.sessionId||p.isIt).map(p=><div className="runner-chip" key={p.id} style={{'--runner-color':p.color} as React.CSSProperties}><strong>{p.id===roomRef.current?.sessionId?'YOU · ':''}{p.name}{p.isIt?' · IT!':''}</strong><small>{p.activePowerUp?`${POWER_UP_CONFIGS[p.activePowerUp.type].name} · ${(p.activePowerUp.remainingMs/1000).toFixed(1)}s`:'Run · Jump · Pass'}</small></div>)}</div><div className="touch-controls"><TouchJoystick direction={joystickDirection} onDirectionChange={setJoystickMovement}/><button className="touch-control-button touch-control-button--jump" aria-label="Jump" onPointerDown={e=>{e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);setTouchControl('up',true);}} onPointerUp={()=>setTouchControl('up',false)} onPointerCancel={()=>setTouchControl('up',false)} onLostPointerCapture={()=>setTouchControl('up',false)}>JUMP</button></div></div></LandscapeGuard>;
   return null;
 }

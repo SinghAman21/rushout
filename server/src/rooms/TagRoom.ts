@@ -355,6 +355,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.onMessage("startGame", (client: Client) => {
       if (client.sessionId !== this.hostId) return;
       if (this.s.gameStarted) return;
+      const players = playerList(this.s);
+      if(players.length < 2 || players.some(p=>p.id !== this.hostId && !p.ready)) return;
       this.startGame();
     });
 
@@ -364,7 +366,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
 
     this.onMessage("ready", (client: Client) => {
       const player = this.s.players.get(client.sessionId);
-      if (player) {
+      if (player && !this.s.gameStarted) {
         player.ready = !player.ready;
         this.sendLobbyState();
       }
@@ -373,7 +375,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.onMessage("config", (client: Client, data: Partial<RoomConfig>) => {
       if (client.sessionId !== this.hostId) return;
       if (this.s.gameStarted) return;
-      if (data.roundLength) {
+      if (data.roundLength && [30,60,120,180].includes(data.roundLength)) {
         this.config.roundLength = data.roundLength;
         this.s.roundLength = data.roundLength;
         this.s.roundLengthNum = data.roundLength;
@@ -395,6 +397,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       console.log(`[JOIN] duplicate ignored for ${client.sessionId}`);
       return;
     }
+    if(this.s.gameStarted) throw new Error("This round has started. Wait for the next lobby.");
     const playerIndex = this.s.players.size;
     if (!this.hostId || (this.hostKey && options.hostKey === this.hostKey)) {
       this.hostId = client.sessionId;
@@ -405,7 +408,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
 
     const player = new PlayerSchema();
     player.id = client.sessionId;
-    player.name = options.name ?? `P${playerIndex + 1}`;
+    player.name = String(options.name ?? "").trim().slice(0,12) || `P${playerIndex + 1}`;
     player.x = spawn.x;
     player.y = spawn.y;
     player.isIt = false;
@@ -446,6 +449,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       this.broadcast("hostUpdate", { hostId: this.hostId ?? "" });
     }
 
+    if (this.s.gameStarted && this.s.players.size < 2) { this.endRound("The other runners left. Invite your crew for another chase."); }
     if (this.s.gameStarted) {
       const players = playerList(this.s);
       const itPlayer = players.find(p => p.isIt);
@@ -484,6 +488,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       gameStarted: this.s.gameStarted,
       roundTimeRemaining: this.s.roundTimeRemaining,
       roundLength: this.s.roundLength,
+      roundLengthNum: this.s.roundLengthNum,
       mapName: this.s.mapName,
       powerUpsEnabled: this.s.powerUpsEnabled,
       players: serializePlayers(this.s, this.playerLastProcessedTick),
@@ -525,10 +530,11 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   }
 
   startGame() {
+    void this.lock();
     this.serverTick = 0;
     this.lastFrameBroadcast = 0;
     this.s.gameStarted = true;
-    this.s.roundTimeRemaining = this.config.roundLength;
+    this.s.roundTimeRemaining = this.config.roundLength + 3;
     this.tagLocked = false;
     this.jumpBuffer.clear();
     this.lastUpInputs.clear();
@@ -537,7 +543,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.playerPendingInputs.clear();
 
     const players = playerList(this.s);
-    const initialItId = this.hostId ?? players[0]?.id ?? "";
+    const initialItId = players[Math.floor(Math.random()*players.length)]?.id ?? "";
     let idx = 0;
     this.s.players.forEach((player) => {
       const spawn = this.map.spawnPoints[idx % this.map.spawnPoints.length];
@@ -565,9 +571,19 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
 
     if (this.tickInterval) clearInterval(this.tickInterval);
     if (this.powerUpInterval) clearInterval(this.powerUpInterval);
-    this.tickInterval = setInterval(() => this.gameTick(), 1000 / SERVER_TICK_RATE);
+    let accumulator = 0;
+    this.tickInterval = setInterval(() => {
+      const now = Date.now();
+      accumulator += Math.min(250, now - this.lastTick);
+      this.lastTick = now;
+      while(accumulator >= 1000 / SERVER_TICK_RATE && this.s.gameStarted) {
+        accumulator -= 1000 / SERVER_TICK_RATE;
+        this.gameTick();
+      }
+    }, 1000 / SERVER_TICK_RATE);
     if (this.config.powerUpsEnabled) {
-      this.powerUpInterval = setInterval(() => this.spawnPowerUp(), 12000);
+      this.spawnPowerUp();
+      this.powerUpInterval = setInterval(() => this.spawnPowerUp(), 8000);
     }
 
     this.sendLobbyState();
@@ -580,10 +596,10 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
 
     this.serverTick++;
     const now = Date.now();
-    this.lastTick = now;
     const dt = 1000 / SERVER_TICK_RATE;
 
     this.s.roundTimeRemaining -= 1 / SERVER_TICK_RATE;
+    if(this.s.roundTimeRemaining > this.config.roundLength) return;
     if (this.s.roundTimeRemaining <= 0) {
       this.s.roundTimeRemaining = 0;
       this.endRound();
@@ -795,6 +811,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
               other.activePowerUpType = -1;
               other.activePowerUpRemaining = 0;
               other.activePowerUpDuration = 0;
+              this.tagLocked = true;
+              this.broadcast('effect',{text:'SHIELD BLOCKED!',x:other.x+16,y:other.y-16,color:'#2ED573'});
               continue;
             }
 
@@ -823,7 +841,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   activatePowerUp(player: PlayerSchema, type: PowerUpType) {
     const typeIdx = POWER_UP_TYPE_INDEX[type];
     const config = POWER_UP_CONFIGS[type];
-
+    this.broadcast('effect', {text: config.name.toUpperCase(),x:player.x+16,y:player.y-12,color:config.color});
     switch (type) {
       case "speed_surge":
       case "ghost_step":
@@ -917,7 +935,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.s.spawns.set(spawn.id, spawn);
   }
 
-  endRound() {
+  endRound(reason?:string) {
+    void this.unlock();
     this.s.gameStarted = false;
     this.tagLocked = false;
     this.jumpBuffer.clear();
@@ -943,8 +962,10 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       wasIt: p.isIt,
     }));
 
+    this.s.players.forEach(p => { p.ready = true; });
     this.sendLobbyState();
     this.broadcast("roundEnd", {
+      reason,
       loserId: itPlayer?.id ?? "",
       loserName: itPlayer?.name ?? "Unknown",
       scores,

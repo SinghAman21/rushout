@@ -1,3 +1,4 @@
+@import "tailwindcss";
 /* ==========================================================================
    CHASE TAG - ARCADE DESIGN SYSTEM
    ========================================================================== */
@@ -534,3 +535,45 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--arcade-blue);
 }
+
+button:focus-visible,a:focus-visible { outline: 3px solid #FFD13B; outline-offset: 5px; }
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; } }
+.map-preview { width:100%; height:90px; border-radius:10px; margin-bottom:8px; }
+/* Rushout club: shared layout and rhythm. Game geometry stays in canvas. */
+:root { --text-muted:#aaa6cd; --text-dim:#c3bfdf; }
+body { line-height:1.5; }
+h1,h2,h3 {line-height:1.1;}
+.home-shell {width:min(1120px,100%);position:relative;z-index:1;}
+.brand-bar,.home-footer {display:flex;justify-content:space-between;gap:24px;align-items:center;font-size:13px;color:var(--text-dim);}
+.brand-bar {letter-spacing:.12em;font-weight:700;padding-bottom:32px;}
+a {color:inherit;} .brand-bar a,.home-footer a {text-decoration:underline;text-underline-offset:4px;}
+.home-hero {display:grid;grid-template-columns:1.2fr 1fr;align-items:center;padding:24px 0 48px;}
+.eyebrow {color:#bfb2ff;font-size:12px;letter-spacing:.16em;font-weight:700;}
+.wordmark {font-family:Outfit, sans-serif;font-size:clamp(60px,8vw,112px);font-weight:900;letter-spacing:-.065em;color:#ffd13b;line-height:1.1;margin:12px 0;filter:drop-shadow(0 7px 0 #080716);}
+.wordmark span {color:#fff7de;} .wordmark i {color:#ff6584;font-style:normal;}
+.hero-copy {font-size:clamp(20px,3vw,30px);font-weight:600;margin:16px 0 8px;}
+.muted {color:var(--text-dim);}.hero-art {position:relative;height:280px;}
+.art-orbit {position:absolute;width:250px;height:250px;border:1px dashed #756b9c;border-radius:50%;left:20%;top:0;transform:rotate(-20deg);}
+.mascot {position:absolute;width:100px;height:116px;border:5px solid #0d0b1c;border-radius:42px 42px 28px 28px;box-shadow:inset 0 -22px #0002,0 10px #0d0b1c;display:grid;place-items:center;}
+.mascot span {background:#fff8e7;color:#17152b;border:4px solid #17152b;border-radius:24px;font:900 40px monospace;line-height:35px;width:78px;text-align:center;letter-spacing:9px;padding-left:9px;}
+.mascot-yellow {background:#ffd13b;left:15%;top:78px;transform:rotate(-12deg);}.mascot-blue {background:#70d8ed;left:60%;top:35px;transform:rotate(12deg);}
+.mascot b {position:absolute;top:-48px;background:#ff4757;border:3px solid #0d0b1c;padding:0 12px;border-radius:10px;transform:rotate(8deg);font-size:24px;}
+.art-platform {height:24px;background:#a79aff;border:4px solid #0d0b1c;border-radius:10px;position:absolute;bottom:34px;width:90%;left:5%;transform:rotate(-5deg);box-shadow:0 12px #514475;}
+.art-caption {position:absolute;bottom:0;right:6%;font-size:11px;letter-spacing:.15em;color:#bfb2ff;}
+.mode-grid {display:grid;grid-template-columns:repeat(3,1fr);gap:20px;}.mode-panel {padding:24px;background:#242040;border:2px solid #453c69;border-radius:20px;position:relative;}
+.mode-panel h2 {font-size:25px;margin:12px 0;}.mode-panel p {color:var(--text-dim);min-height:48px;font-size:15px;margin-bottom:24px;}.mode-panel .arcade-btn{width:100%;font-size:14px;}
+.mode-number {color:#a89dc7;font:700 12px monospace;}.home-footer{margin:32px 0 20px;}.rules {font-size:14px;color:var(--text-dim);max-width:760px;}.rules summary {cursor:pointer;min-height:44px;}.rules p{padding:12px 0;}
+.game-topbar {position:fixed;z-index:50;top:8px;left:16px;right:16px;display:flex;justify-content:space-between;align-items:center;gap:8px;}.game-time {font:900 24px Outfit,sans-serif;color:#ffd13b;min-width:80px;text-align:center;}.game-time.urgent {color:#ff8c9c;}.game-roster {position:fixed;bottom:8px;left:16px;right:16px;display:flex;justify-content:center;gap:8px;z-index:40;pointer-events:none;}.runner-chip {background:#201d40;border:2px solid var(--runner-color);border-radius:12px;padding:4px 12px;font-size:13px;}.runner-chip strong{color:#fff;}.runner-chip small{display:block;color:#d1cce4;}.countdown-overlay {position:fixed;inset:0;display:grid;place-content:center;text-align:center;pointer-events:none;z-index:45;background:#0d0b1c55;}.countdown-overlay b{font:900 96px Outfit;color:#ffd13b;text-shadow:0 8px #121026;}.countdown-overlay p{font-size:24px;}.setup-shell {width:min(100%,980px);}.setup-header{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:24px;}.setup-header h1{font-size:32px;margin-bottom:8px;}.setup-grid{display:grid;grid-template-columns:1fr 1.25fr;gap:24px;}.setup-section {margin-bottom:24px;}.setup-section h2 {font-size:16px;color:#c3bfdf;margin-bottom:12px;}.choice-row{display:flex;gap:8px;}.choice-row>*{flex:1;}.player-row{display:flex;gap:12px;align-items:center;margin:16px 0;}.player-row label{flex:1;}.player-row small {display:block;color:#c3bfdf;font-size:12px;margin-top:4px;}.arena-choices {display:grid;gap:12px;}.arena-choice {text-align:left;padding:12px;}.arena-choice .map-preview{height:90px;}.arena-choice>span {display:grid;grid-template-columns:150px 1fr;column-gap:16px;align-items:center;}.arena-choice small{grid-column:2;}.arena-choice svg {grid-row:1/3;}.result-title{font-size:48px;color:#ffd13b;margin:16px 0;}.result-actions{display:flex;gap:12px;flex-wrap:wrap;}.result-actions>*{flex:1;}.sound-toggle{position:fixed;bottom:12px;right:12px;z-index:80;background:#282341;color:#e5dffb;border:2px solid #655b85;border-radius:10px;padding:8px 12px;min-height:44px;font-size:12px;}
+.arcade-chip {min-height:44px;}.arcade-input {min-width:0;} .map-preview{display:block;}.arcade-bg{padding:32px 24px;} .arcade-card{box-shadow:0 8px #0d0b1c;padding:28px;}
+@media(max-width:700px){.home-hero{grid-template-columns:1fr;padding-bottom:24px;}.hero-art{display:none;}.mode-grid{grid-template-columns:1fr;}.mode-panel p{min-height:0;margin-bottom:16px;}.home-footer{flex-direction:column;align-items:start;gap:12px;}.setup-grid{grid-template-columns:1fr;}.arcade-bg{justify-content:flex-start;padding:24px 16px;}.brand-bar{font-size:10px;}.game-topbar{left:8px;right:8px;}.game-topbar .arcade-btn{padding:6px 10px;font-size:11px;}.runner-chip{font-size:11px;padding:2px 6px;}.sound-toggle{bottom:auto;top:62px;right:8px;}.arena-choice>span{grid-template-columns:120px 1fr;}}
+@media(max-height:500px){.game-roster{bottom:2px;}.runner-chip small{display:none;}.game-time{font-size:20px;}.sound-toggle{top:8px;right:150px;padding:4px 8px;min-height:36px;}.touch-controls{bottom:50px;left:12px;right:12px;}.touch-joystick{opacity:.8;}}
+.mini-runner{display:grid;place-items:center;min-width:48px;height:52px;border-radius:20px 20px 12px 12px;border:3px solid #0d0b1c;box-shadow:inset 0 -10px #0002;color:#17152b;font-weight:900;}
+.lobby-code{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:20px;background:#15122d;border:2px dashed #8d7fa8;border-radius:16px;}.lobby-code>div{flex:1;}.lobby-code small{display:block;letter-spacing:.12em;color:#c3bfdf;}.lobby-code strong{font:900 32px Outfit;letter-spacing:.15em;color:#ffd13b;}.lobby-players{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;}.lobby-player{display:flex;align-items:center;gap:12px;background:#161430;padding:12px;border-radius:12px;}.lobby-player small{display:block;color:#c3bfdf;font-size:12px;}.game-roster{max-width:calc(100vw - 32px);overflow:hidden;}.game-roster .runner-chip{min-width:0;}.game-roster strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sound-toggle{height:44px;bottom:auto;top:12px;right:12px;cursor:pointer;}
+@media(max-height:500px){.sound-toggle{height:36px;right:140px;top:8px;}}
+@media(min-width:701px){.brand-bar{padding-right:110px;}}
+.game-topbar{padding-right:110px;}.game-topbar>span{max-width:120px;}
+@media(max-height:500px){.game-topbar{padding-right:220px;}}
+@media(max-width:700px){.game-topbar{padding-right:100px;}.game-roster{left:4px;right:4px;max-width:calc(100vw - 8px);gap:4px;}.runner-chip{max-width:25%;}}
+.game-topbar .game-time{position:absolute;left:50%;transform:translateX(-50%);}
+.game-topbar{top:max(8px,env(safe-area-inset-top));left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));}.game-roster{bottom:max(4px,env(safe-area-inset-bottom));}

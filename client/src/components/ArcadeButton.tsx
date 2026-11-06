@@ -1,4 +1,5 @@
 import React from "react";
+import { Button } from "./ui/button.js";
 
 export type ArcadeButtonColor = "yellow" | "green" | "red" | "blue" | "purple" | "secondary";
 
@@ -27,7 +28,7 @@ export default function ArcadeButton({
   };
 
   return (
-    <button
+    <Button
       className={`arcade-btn arcade-btn-${color} ${className}`}
       style={{
         ...sizeStyles[size],
@@ -38,6 +39,6 @@ export default function ArcadeButton({
     >
       {icon && <span style={{ display: "inline-flex", fontSize: "1.2em", lineHeight: 1 }}>{icon}</span>}
       <span>{children}</span>
-    </button>
+    </Button>
   );
 }

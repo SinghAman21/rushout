@@ -294,6 +294,7 @@ export function updateLocalGame(
     if (player.activePowerUp) {
       player.activePowerUp.remainingMs -= dt;
       if (player.activePowerUp.remainingMs <= 0) {
+        state.events.push({id:`expire_${player.id}_${Date.now()}`,type:'pickup',text:`${POWER_UP_CONFIGS[player.activePowerUp.type].name} ended`,x:player.x+16,y:player.y-12,color:'#fff7de',remainingMs:900,maxMs:900});
         player.activePowerUp = null;
       }
     }
@@ -512,6 +513,7 @@ export function updateLocalGame(
           // Check safe bubble
           if (other.activePowerUp?.type === "safe_bubble") {
             other.activePowerUp = null;
+            state.tagLocked = true;
             state.events.push({
               id: `ev_${Date.now()}`,
               type: "shield_block",

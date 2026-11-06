@@ -1,0 +1,2 @@
+import {defineConfig} from '@playwright/test';
+export default defineConfig({testDir:'./tests',testMatch:'**/*.spec.ts',timeout:60000,workers:1,use:{baseURL:'http://localhost:3000',viewport:{width:1440,height:900},trace:'retain-on-failure',screenshot:'only-on-failure'},webServer:[{command:'npm run dev:client',url:'http://localhost:3000',reuseExistingServer:true},{command:'npm run dev:server',url:'http://localhost:2567/matchmake/tag_room',reuseExistingServer:true}]});

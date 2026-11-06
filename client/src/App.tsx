@@ -4,7 +4,7 @@ import MainMenu from "./pages/MainMenu.js";
 import LocalPlay from "./pages/LocalPlay.js";
 import CreateRoom from "./pages/CreateRoom.js";
 import JoinRoom from "./pages/JoinRoom.js";
-import RoomLobby from "./pages/RoomLobby.js";
+import SoundControl from "./components/SoundControl.js";
 import OnlineGame from "./pages/OnlineGame.js";
 import Effects from "./pages/Effects.js";
 import Playground from "./pages/Playground.js";
@@ -14,14 +14,16 @@ export default function App() {
     <>
       <Routes>
         <Route path="/" element={<MainMenu />} />
+        <Route path="/practice" element={<LocalPlay />} />
         <Route path="/local" element={<LocalPlay />} />
         <Route path="/create-room" element={<CreateRoom />} />
         <Route path="/join-room" element={<JoinRoom />} />
-        <Route path="/room/:roomId" element={<RoomLobby />} />
+        <Route path="/room/:roomId" element={<OnlineGame />} />
         <Route path="/online/:roomId" element={<OnlineGame />} />
         <Route path="/effects" element={<Effects />} />
         <Route path="/playground" element={<Playground />} />
       </Routes>
+      <SoundControl />
       <Analytics />
     </>
   );

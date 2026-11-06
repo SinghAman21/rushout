@@ -53,24 +53,45 @@ export interface IPlayerSchema {
 }
 
 export class PlayerSchema extends Schema {
-  id: string = "";
-  name: string = "";
-  x: number = 0;
-  y: number = 0;
-  vx: number = 0;
-  vy: number = 0;
-  isIt: boolean = false;
-  alive: boolean = true;
-  facingX: number = 1;
-  facingY: number = 0;
-  color: string = "#FFFFFF";
-  score: number = 0;
-  ready: boolean = false;
-  activePowerUpType: number = -1;
-  activePowerUpRemaining: number = 0;
-  activePowerUpDuration: number = 0;
-  powerUpCooldown: number = 0;
-  heldPowerUp: number = -1;
+  declare id: string;
+  declare name: string;
+  declare x: number;
+  declare y: number;
+  declare vx: number;
+  declare vy: number;
+  declare isIt: boolean;
+  declare alive: boolean;
+  declare facingX: number;
+  declare facingY: number;
+  declare color: string;
+  declare score: number;
+  declare ready: boolean;
+  declare activePowerUpType: number;
+  declare activePowerUpRemaining: number;
+  declare activePowerUpDuration: number;
+  declare powerUpCooldown: number;
+  declare heldPowerUp: number;
+  constructor() {
+    super();
+    this.id = "";
+    this.name = "";
+    this.x = 0;
+    this.y = 0;
+    this.vx = 0;
+    this.vy = 0;
+    this.isIt = false;
+    this.alive = true;
+    this.facingX = 1;
+    this.facingY = 0;
+    this.color = "#FFFFFF";
+    this.score = 0;
+    this.ready = false;
+    this.activePowerUpType = -1;
+    this.activePowerUpRemaining = 0;
+    this.activePowerUpDuration = 0;
+    this.powerUpCooldown = 0;
+    this.heldPowerUp = -1;
+  }
 }
 
 type("string")(PlayerSchema.prototype, "id");
@@ -93,11 +114,19 @@ type("number")(PlayerSchema.prototype, "powerUpCooldown");
 type("number")(PlayerSchema.prototype, "heldPowerUp");
 
 export class PowerUpSpawnSchema extends Schema {
-  id: string = "";
-  type: number = 0;
-  x: number = 0;
-  y: number = 0;
-  respawnTimer: number = 0;
+  declare id: string;
+  declare type: number;
+  declare x: number;
+  declare y: number;
+  declare respawnTimer: number;
+  constructor() {
+    super();
+    this.id = "";
+    this.type = 0;
+    this.x = 0;
+    this.y = 0;
+    this.respawnTimer = 0;
+  }
 }
 
 type("string")(PowerUpSpawnSchema.prototype, "id");
@@ -107,10 +136,17 @@ type("number")(PowerUpSpawnSchema.prototype, "y");
 type("number")(PowerUpSpawnSchema.prototype, "respawnTimer");
 
 export class StickyPatchSchema extends Schema {
-  id: string = "";
-  x: number = 0;
-  y: number = 0;
-  remainingMs: number = 0;
+  declare id: string;
+  declare x: number;
+  declare y: number;
+  declare remainingMs: number;
+  constructor() {
+    super();
+    this.id = "";
+    this.x = 0;
+    this.y = 0;
+    this.remainingMs = 0;
+  }
 }
 
 type("string")(StickyPatchSchema.prototype, "id");
@@ -119,13 +155,23 @@ type("number")(StickyPatchSchema.prototype, "y");
 type("number")(StickyPatchSchema.prototype, "remainingMs");
 
 export class DecoySchema extends Schema {
-  id: string = "";
-  ownerId: string = "";
-  x: number = 0;
-  y: number = 0;
-  vx: number = 0;
-  vy: number = 0;
-  remainingMs: number = 0;
+  declare id: string;
+  declare ownerId: string;
+  declare x: number;
+  declare y: number;
+  declare vx: number;
+  declare vy: number;
+  declare remainingMs: number;
+  constructor() {
+    super();
+    this.id = "";
+    this.ownerId = "";
+    this.x = 0;
+    this.y = 0;
+    this.vx = 0;
+    this.vy = 0;
+    this.remainingMs = 0;
+  }
 }
 
 type("string")(DecoySchema.prototype, "id");
@@ -137,17 +183,31 @@ type("number")(DecoySchema.prototype, "vy");
 type("number")(DecoySchema.prototype, "remainingMs");
 
 export class TagRoomStateSchema extends Schema {
-  players = new MapSchema<PlayerSchema>();
-  spawns = new MapSchema<PowerUpSpawnSchema>();
-  stickyPatches = new MapSchema<StickyPatchSchema>();
-  decoys = new MapSchema<DecoySchema>();
-  hostId: string = "";
-  gameStarted: boolean = false;
-  roundTimeRemaining: number = 0;
-  roundLength: number = 120;
-  mapName: string = "arena";
-  roundLengthNum: number = 120;
-  powerUpsEnabled: boolean = true;
+  declare players: MapSchema<PlayerSchema>;
+  declare spawns: MapSchema<PowerUpSpawnSchema>;
+  declare stickyPatches: MapSchema<StickyPatchSchema>;
+  declare decoys: MapSchema<DecoySchema>;
+  declare hostId: string;
+  declare gameStarted: boolean;
+  declare roundTimeRemaining: number;
+  declare roundLength: number;
+  declare mapName: string;
+  declare roundLengthNum: number;
+  declare powerUpsEnabled: boolean;
+  constructor() {
+    super();
+    this.players = new MapSchema<PlayerSchema>();
+    this.spawns = new MapSchema<PowerUpSpawnSchema>();
+    this.stickyPatches = new MapSchema<StickyPatchSchema>();
+    this.decoys = new MapSchema<DecoySchema>();
+    this.hostId = "";
+    this.gameStarted = false;
+    this.roundTimeRemaining = 0;
+    this.roundLength = 120;
+    this.mapName = "arena";
+    this.roundLengthNum = 120;
+    this.powerUpsEnabled = true;
+  }
 }
 
 type({ map: PlayerSchema })(TagRoomStateSchema.prototype, "players");

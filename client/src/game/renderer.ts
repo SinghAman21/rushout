@@ -21,6 +21,7 @@ const POWER_UP_EFFECT_DESCRIPTIONS: Record<string, string> = {
   sticky_patch: "DROPPED SLOW GOO PUDDLE!",
 };
 
+const motionHistory = new WeakMap<CanvasRenderingContext2D, Map<string,{vy:number,landUntil:number}>>();
 // Normalize players list whether MapSchema or Array
 export function extractPlayers(playersData: any): PlayerState[] {
   if (!playersData) return [];
@@ -114,14 +115,15 @@ export function renderGame(
   const decoys = extractDecoys(rawState.decoys);
   const events: VisualEvent[] = rawState.events ?? [];
 
-  // Fill the entire canvas with the arena instead of letterboxing it.
-  const scaleX = canvasW / map.width;
-  const scaleY = canvasH / map.height;
+  // Reserve separate HUD bands; preserve the world aspect ratio.
+  const scaleX = Math.min(canvasW / map.width, (canvasH - 140) / map.height);
+  const scaleY = scaleX;
 
   ctx.fillStyle = "#0e0c1f";
   ctx.fillRect(0, 0, canvasW, canvasH);
 
   ctx.save();
+  ctx.translate((canvasW-map.width*scaleX)/2, 64 + (canvasH-140-map.height*scaleY)/2);
   ctx.scale(scaleX, scaleY);
 
   // Outer arena shadow
@@ -149,6 +151,14 @@ export function renderGame(
     }
   }
 
+  // Quiet ambient motes stay behind collision geometry.
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    ctx.fillStyle = map.theme === 'neon_rooftops' ? '#f5c9ff44' : '#fff8d944';
+    for (let i = 0; i < 12; i++) {
+      const t = performance.now() / 1000;
+      ctx.beginPath(); ctx.arc((i * 149 + t * 6) % map.width, 170 + (i * 67) % 640 + Math.sin(t + i) * 8, 2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
   // 3. OBSTACLES: PLATFORMS & SOLID COVER
   for (const o of map.obstacles) {
     if (o.x < 0 || o.x >= map.width) continue;
@@ -160,7 +170,7 @@ export function renderGame(
   }
 
   // 4. STICKY GOO PUDDLES
-  const now = Date.now();
+  const now = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : Date.now();
   for (const sp of stickyPatches) {
     const alpha = Math.min(1, sp.remainingMs / 1000);
     const wobble = Math.sin(now / 160 + sp.x) * 3;
@@ -274,6 +284,11 @@ export function renderGame(
 
     ctx.save();
 
+    // Keep runners legible on short landscape screens without changing physics.
+    const visualScale = Math.max(1, Math.min(1.8, 16 / (32 * scaleX)));
+    ctx.translate(player.x + PLAYER_SIZE, player.y + 32);
+    ctx.scale(visualScale, visualScale);
+    ctx.translate(-player.x - PLAYER_SIZE, -player.y - 32);
     // Speed surge wind lines / trail
     if (hasSpeed) {
       ctx.fillStyle = "rgba(255, 209, 59, 0.45)";
@@ -287,6 +302,17 @@ export function renderGame(
       ctx.globalAlpha = 0.28;
     }
 
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const running = Math.abs(player.vx) > 0.1 && Math.abs(player.vy) < 0.1;
+    const bounce = reduced ? 0 : running ? Math.sin(now / 70) * 1.5 : Math.sin(now / 500 + player.x) * 0.5;
+    let history=motionHistory.get(ctx);if(!history){history=new Map();motionHistory.set(ctx,history);}
+    const prior=history.get(player.id);const landUntil=prior && prior.vy>1 && player.vy===0 ? performance.now()+110 : prior?.landUntil??0;
+    history.set(player.id,{vy:player.vy,landUntil});
+    const stretch = reduced ? 1 : performance.now()<landUntil ? 0.84 : player.vy < -1 ? 1.10 : player.vy > 2 ? 1.05 : running ? 0.96 + Math.sin(now / 70) * 0.04 : 1;
+    ctx.save();
+    ctx.translate(player.x + PLAYER_SIZE, player.y + PLAYER_SIZE * 2);
+    ctx.scale(1 / stretch, stretch);
+    ctx.translate(-player.x - PLAYER_SIZE, -player.y - PLAYER_SIZE * 2 + bounce);
     drawCartoonPlayer(
       ctx,
       player.x,
@@ -297,6 +323,18 @@ export function renderGame(
       player.facing,
       player.name
     );
+    ctx.restore();
+    if (player.id === rawState.localPlayerId) {
+      ctx.fillStyle = '#fff7de'; ctx.font = "900 15px Outfit, sans-serif"; ctx.textAlign = 'center';
+      ctx.strokeStyle = '#141126'; ctx.lineWidth = 5;
+      ctx.strokeText('▼ YOU', player.x + PLAYER_SIZE, player.y - 48);
+      ctx.fillText('▼ YOU', player.x + PLAYER_SIZE, player.y - 48);
+    }
+    if (player.activePowerUp) {
+      const effect = POWER_UP_CONFIGS[player.activePowerUp.type];
+      ctx.fillStyle = '#141126'; ctx.fillRect(player.x - 4, player.y + 40, 40, 5);
+      ctx.fillStyle = effect.color; ctx.fillRect(player.x - 4, player.y + 40, 40 * player.activePowerUp.remainingMs / player.activePowerUp.durationMs, 5);
+    }
 
     // Safe Bubble Shield (Luminous green sphere)
     if (hasBubble) {
@@ -333,7 +371,7 @@ export function renderGame(
   // 8. FLOATING VISUAL FEEDBACK POPUPS
   for (const ev of events) {
     const progress = 1 - ev.remainingMs / ev.maxMs;
-    const rise = progress * 32;
+    const rise = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : progress * 24;
     const alpha = Math.min(1, ev.remainingMs / 300);
 
     ctx.save();
@@ -345,6 +383,10 @@ export function renderGame(
     const boxX = ev.x - textW / 2;
     const boxY = ev.y - rise - 18;
 
+    if (ev.type === 'tag' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches && progress < .45) {
+      ctx.strokeStyle=ev.color;ctx.lineWidth=3;ctx.globalAlpha=(1-progress/.45)*.8;
+      ctx.beginPath();ctx.arc(ev.x,ev.y+24,20+progress*90,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=alpha;
+    }
     // Popup Pill
     ctx.fillStyle = "#121026";
     ctx.beginPath();
@@ -419,6 +461,11 @@ function renderSunnyCartoonBackground(ctx: CanvasRenderingContext2D, map: GameMa
   ctx.ellipse(map.width * 0.78, map.height * 0.95, map.width * 0.42, 140, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  // Skyline landmark: distant observation wheel, deliberately low contrast.
+  ctx.save(); ctx.strokeStyle = '#459dcc55'; ctx.lineWidth = 9;
+  ctx.beginPath();ctx.arc(800,660,180,0,Math.PI*2);ctx.stroke();
+  for(let i=0;i<8;i++){const a=i*Math.PI/4;ctx.beginPath();ctx.moveTo(800,660);ctx.lineTo(800+Math.cos(a)*180,660+Math.sin(a)*180);ctx.stroke();}
+  ctx.beginPath();ctx.moveTo(700,880);ctx.lineTo(800,660);ctx.lineTo(900,880);ctx.stroke();ctx.restore();
   // Fluffy white cartoon clouds
   drawCartoonCloud(ctx, map.width * 0.12, 110, 1);
   drawCartoonCloud(ctx, map.width * 0.48, 90, 1.25);
@@ -460,6 +507,9 @@ function renderNeonRooftopBackground(ctx: CanvasRenderingContext2D, map: GameMap
     }
   }
 
+  // Rooftop landmark: a distant arcade sign, without a collision outline.
+  ctx.save();ctx.fillStyle='#73419a55';ctx.fillRect(600,120,400,100);
+  ctx.font='900 54px Outfit';ctx.textAlign='center';ctx.fillStyle='#e4b6ff66';ctx.fillText('RUSH / OUT',800,190);ctx.restore();
   // Neon street haze
   ctx.fillStyle = "rgba(236, 72, 153, 0.12)";
   ctx.fillRect(0, horizon - 8, map.width, map.height - horizon + 8);
@@ -493,6 +543,8 @@ function renderDesertRuinsBackground(ctx: CanvasRenderingContext2D, map: GameMap
   ctx.ellipse(map.width * 0.82, map.height * 0.92, map.width * 0.5, 130, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  // Desert landmark: the old sun gate behind the chase routes.
+  ctx.save();ctx.strokeStyle='#b86a3844';ctx.lineWidth=56;ctx.beginPath();ctx.arc(810,680,215,Math.PI,0);ctx.stroke();ctx.fillStyle='#b86a3844';ctx.fillRect(568,680,56,200);ctx.fillRect(997,680,56,200);ctx.restore();
   // Ruined temple silhouettes
   ctx.fillStyle = "rgba(120, 53, 15, 0.35)";
   for (let x = 120; x < map.width; x += 320) {
@@ -965,6 +1017,11 @@ export function drawCartoonPlayer(
   const cx = x + PLAYER_SIZE;
   const cy = y + PLAYER_SIZE;
 
+  if (isIt) {
+    ctx.save(); ctx.strokeStyle = "#FF4757"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, 25, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = "#FF4757"; ctx.font = "900 12px sans-serif"; ctx.textAlign = "center"; ctx.fillText("IT", cx, y-28); ctx.restore();
+  }
   // 1. Soft Floor Shadow
   ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
   ctx.beginPath();
@@ -1000,6 +1057,9 @@ export function drawCartoonPlayer(
   const lookX = (facing?.x ?? 1) * 3.5;
   const eyeCenterY = cy - 2;
 
+  // Shared cream visor ties the in-game crew to the title characters.
+  ctx.fillStyle = '#fff7de';ctx.strokeStyle='#17152b';ctx.lineWidth=2;
+  ctx.beginPath();roundRectPath(ctx,cx-12,eyeCenterY-7,25,14,7);ctx.fill();ctx.stroke();
   // Eye Sclera (White)
   ctx.fillStyle = "#FFFFFF";
   ctx.beginPath();
