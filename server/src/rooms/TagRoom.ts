@@ -274,6 +274,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   private serverTick = 0;
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private powerUpInterval: ReturnType<typeof setInterval> | null = null;
+  private simulationAccumulator = 0;
   private lastTick = Date.now();
   private lastFrameBroadcast = 0;
   private playerInputs: Map<string, InputState> = new Map();
@@ -310,6 +311,9 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     state.gameStarted = false;
     this.setState(state);
     this.setPatchRate(1000 / NETWORK_PATCH_RATE);
+    // Colyseus owns the room clock. Its measured delta keeps fixed-step
+    // movement aligned with real elapsed time when Node is briefly busy.
+    this.setSimulationInterval((deltaTime: number) => this.advanceSimulation(deltaTime), 1000 / SERVER_TICK_RATE);
 
     this.onMessage("input", (client: Client, data: InputData | number) => {
       const { state: input, clientTick, jump: explicitJump } = decodeInput(data);
@@ -568,19 +572,13 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.decoyBrains.clear();
 
     this.lastTick = Date.now();
+    this.simulationAccumulator = 0;
 
     if (this.tickInterval) clearInterval(this.tickInterval);
     if (this.powerUpInterval) clearInterval(this.powerUpInterval);
-    let accumulator = 0;
-    this.tickInterval = setInterval(() => {
-      const now = Date.now();
-      accumulator += Math.min(250, now - this.lastTick);
-      this.lastTick = now;
-      while(accumulator >= 1000 / SERVER_TICK_RATE && this.s.gameStarted) {
-        accumulator -= 1000 / SERVER_TICK_RATE;
-        this.gameTick();
-      }
-    }, 1000 / SERVER_TICK_RATE);
+    // Keep this reference for lifecycle compatibility; the room clock above
+    // drives both gameplay and countdowns so no per-room interval drifts.
+    this.tickInterval = null;
     if (this.config.powerUpsEnabled) {
       this.spawnPowerUp();
       this.powerUpInterval = setInterval(() => this.spawnPowerUp(), 8000);
@@ -836,6 +834,20 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       this.lastFrameBroadcast = now;
       this.sendGameFrame();
     }
+  }
+
+  private advanceSimulation(deltaTime: number) {
+    if (!this.s?.gameStarted) return;
+    // Never simulate an unbounded backlog after a long event-loop stall.
+    this.simulationAccumulator += Math.min(250, Math.max(0, deltaTime));
+    const stepMs = 1000 / SERVER_TICK_RATE;
+    let steps = 0;
+    while (this.simulationAccumulator >= stepMs && this.s.gameStarted && steps < 15) {
+      this.simulationAccumulator -= stepMs;
+      this.gameTick();
+      steps++;
+    }
+    if (steps === 15) this.simulationAccumulator = Math.min(this.simulationAccumulator, stepMs);
   }
 
   activatePowerUp(player: PlayerSchema, type: PowerUpType) {

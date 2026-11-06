@@ -211,7 +211,7 @@ function smoothRemotePlayer(
     return { ...player, facing: { ...player.facing } };
   }
 
-  const blendRate = distance > 60 ? 45 : 65;
+  const blendRate = distance > 60 ? 34 : 42;
   const alpha = 1 - Math.exp(-dtMs / blendRate);
 
   let targetX = previous.x + dx * alpha;
@@ -234,6 +234,36 @@ function smoothRemotePlayer(
     y: targetY,
     facing: { ...player.facing },
   };
+}
+
+interface NetworkSnapshot { receivedAt: number; players: PlayerState[] }
+
+function sampleRemotePlayers(history: NetworkSnapshot[], now: number, localId: string) {
+  if (!history.length) return new Map<string, PlayerState>();
+  const targetTime = now - 50;
+  while (history.length > 2 && history[1].receivedAt < targetTime - 100) history.shift();
+  let before = history[0];
+  let after = history[history.length - 1];
+  for (let i = 1; i < history.length; i++) {
+    if (history[i].receivedAt >= targetTime) { before = history[i - 1]; after = history[i]; break; }
+    before = history[i];
+  }
+  const span = after.receivedAt - before.receivedAt;
+  const alpha = span > 0 ? Math.max(0, Math.min(1, (targetTime - before.receivedAt) / span)) : 1;
+  const previous = new Map(before.players.map(player => [player.id, player]));
+  const next = new Map(after.players.map(player => [player.id, player]));
+  const result = new Map<string, PlayerState>();
+  for (const [id, current] of next) {
+    if (id === localId) continue;
+    const old = previous.get(id);
+    if (!old) { result.set(id, current); continue; }
+    result.set(id, {
+      ...current,
+      x: old.x + (current.x - old.x) * alpha,
+      y: old.y + (current.y - old.y) * alpha,
+    });
+  }
+  return result;
 }
 
 export default function OnlineGame() {
@@ -280,6 +310,8 @@ export default function OnlineGame() {
   const smoothedPlayersRef = useRef<Map<string, PlayerState>>(new Map());
   const connectedRef = useRef(false);
   const eventsRef = useRef<any[]>([]);
+  const networkSnapshotsRef = useRef<NetworkSnapshot[]>([]);
+  const lastHudUpdateRef = useRef(0);
   const lastJumpHeldRef = useRef(false);
   const jumpBufferMsRef = useRef(0);
   const clientTickRef = useRef(0);
@@ -409,6 +441,8 @@ export default function OnlineGame() {
             lastServerTickRef.current = frame.serverTick;
           }
           gameFrameRef.current = frame;
+          networkSnapshotsRef.current.push({ receivedAt: performance.now(), players: extractPlayers(frame.players) });
+          if (networkSnapshotsRef.current.length > 12) networkSnapshotsRef.current.shift();
           if (frame.hostId) setServerHostId(frame.hostId);
           if (frame.roomCode) setActualRoomId(String(frame.roomCode).toUpperCase().replace(/[^A-Z0-9]/g, ""));
         });
@@ -432,6 +466,7 @@ export default function OnlineGame() {
           lastSentMaskRef.current = -1;
           lastSentAtRef.current = 0;
           gameFrameRef.current = null;
+          networkSnapshotsRef.current = [];
           inputChangedRef.current = false;
           setStatus("playing");
         });
@@ -554,7 +589,11 @@ export default function OnlineGame() {
       const remaining=state.roundTimeRemaining ?? 0;
       setCountdown(Math.max(0,Math.ceil(remaining-(state.roundLengthNum??state.roundLength??roundLength))));
       const nextHudTime = Math.max(0, Math.ceil(Math.min(remaining,state.roundLengthNum??state.roundLength??roundLength)));
-      setHudTimeLeft(current => current === nextHudTime ? current : nextHudTime);
+      const updateHud = now - lastHudUpdateRef.current >= 100;
+      if (updateHud) {
+        lastHudUpdateRef.current = now;
+        setHudTimeLeft(current => current === nextHudTime ? current : nextHudTime);
+      }
 
       const input = status === "playing"
         ? currentInput(keysRef.current, touchInputRef.current)
@@ -654,6 +693,7 @@ export default function OnlineGame() {
 
       // 5. ASSEMBLE PLAYERS FOR RENDERING
       const playerList: PlayerState[] = [];
+      const remoteSamples = sampleRemotePlayers(networkSnapshotsRef.current, now, room.sessionId);
       for (const player of rawPlayerList) {
         if (player.id === room.sessionId) {
           if (predictedStateRef.current) {
@@ -675,14 +715,15 @@ export default function OnlineGame() {
             playerList.push(player);
           }
         } else {
+          const sampled = remoteSamples.get(player.id) ?? player;
           const prev = smoothedPlayersRef.current.get(player.id);
-          const smoothed = prev ? smoothRemotePlayer(player, prev, frameDelta, map) : player;
+          const smoothed = prev ? smoothRemotePlayer(sampled, prev, frameDelta, map) : sampled;
           smoothedPlayersRef.current.set(player.id, smoothed);
           playerList.push(smoothed);
         }
       }
 
-      setLivePlayers(previous=> JSON.stringify(previous.map(p=>[p.id,p.isIt,p.activePowerUp?.type,Math.ceil((p.activePowerUp?.remainingMs??0)/200)]))===JSON.stringify(playerList.map(p=>[p.id,p.isIt,p.activePowerUp?.type,Math.ceil((p.activePowerUp?.remainingMs??0)/200)]))?previous:playerList);
+      if (updateHud) setLivePlayers(playerList);
       const renderState = {
         localPlayerId: room.sessionId,
         players: playerList,
