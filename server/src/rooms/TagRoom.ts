@@ -293,6 +293,9 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     powerUpsEnabled: true,
   };
   private map: GameMap = MAPS.arena;
+  private rematchVotes = new Map<string, boolean>();
+  private rematchVoteEndsAt = 0;
+  private rematchVoteTimer: ReturnType<typeof setTimeout> | null = null;
 
   onCreate(options: { config?: RoomConfig; hostKey?: string; roomCode?: string }) {
     const roomCode = (options.roomCode ?? generateRoomCode()).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
@@ -316,6 +319,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.setSimulationInterval((deltaTime: number) => this.advanceSimulation(deltaTime), 1000 / SERVER_TICK_RATE);
 
     this.onMessage("input", (client: Client, data: InputData | number) => {
+      if (!this.s.players.get(client.sessionId)?.alive) return;
       const { state: input, clientTick, jump: explicitJump } = decodeInput(data);
       const prevClientTick = this.playerLastClientTick.get(client.sessionId) ?? 0;
 
@@ -361,11 +365,18 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       if (this.s.gameStarted) return;
       const players = playerList(this.s);
       if(players.length < 2 || players.some(p=>p.id !== this.hostId && !p.ready)) return;
+      players.forEach(p => { p.alive = true; });
       this.startGame();
     });
 
     this.onMessage("requestLobbyState", (client: Client) => {
       this.sendLobbyState(client);
+    });
+
+    this.onMessage("rematchVote", (client: Client, data: { yes?: boolean }) => {
+      if (this.s.gameStarted || this.rematchVoteEndsAt <= Date.now() || !this.s.players.has(client.sessionId)) return;
+      this.rematchVotes.set(client.sessionId, data?.yes === true);
+      this.broadcastRematchVote();
     });
 
     this.onMessage("ready", (client: Client) => {
@@ -401,14 +412,20 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       console.log(`[JOIN] duplicate ignored for ${client.sessionId}`);
       return;
     }
-    if(this.s.gameStarted) throw new Error("This round has started. Wait for the next lobby.");
     const playerIndex = this.s.players.size;
     if (!this.hostId || (this.hostKey && options.hostKey === this.hostKey)) {
       this.hostId = client.sessionId;
       this.s.hostId = client.sessionId;
       this.broadcast("hostUpdate", { hostId: client.sessionId });
     }
-    const spawn = this.map.spawnPoints[playerIndex % this.map.spawnPoints.length];
+    const spawnPoints = this.map.spawnPoints;
+    const existingPlayers = playerList(this.s).filter(p => p.alive);
+    const spawn = this.s.gameStarted && existingPlayers.length
+      ? spawnPoints.reduce((best, point) => {
+          const clearance = (candidate: typeof point) => Math.min(...existingPlayers.map(p => distSq(candidate.x, candidate.y, p.x, p.y)));
+          return clearance(point) > clearance(best) ? point : best;
+        }, spawnPoints[0])
+      : spawnPoints[playerIndex % spawnPoints.length];
 
     const player = new PlayerSchema();
     player.id = client.sessionId;
@@ -426,6 +443,12 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     player.activePowerUpType = -1;
 
     this.s.players.set(client.sessionId, player);
+    if (this.s.gameStarted) {
+      player.vx = 0;
+      player.vy = 0;
+      this.playerLastClientTick.delete(client.sessionId);
+      this.playerLastProcessedTick.delete(client.sessionId);
+    }
     this.playerInputs.set(client.sessionId, {
       up: false, down: false, left: false, right: false,
     });
@@ -434,6 +457,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   }
 
   onLeave(client: Client) {
+    this.rematchVotes.delete(client.sessionId);
     this.s.players.delete(client.sessionId);
     this.playerInputs.delete(client.sessionId);
     this.playerPendingInputs.delete(client.sessionId);
@@ -453,9 +477,11 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       this.broadcast("hostUpdate", { hostId: this.hostId ?? "" });
     }
 
-    if (this.s.gameStarted && this.s.players.size < 2) { this.endRound("The other runners left. Invite your crew for another chase."); }
+    if (!this.s.gameStarted && this.rematchVoteEndsAt > Date.now()) this.broadcastRematchVote();
+
+    if (this.s.gameStarted && playerList(this.s).filter(p => p.alive).length < 2) { this.endRound("The other runners left. Invite your crew for another chase."); }
     if (this.s.gameStarted) {
-      const players = playerList(this.s);
+      const players = playerList(this.s).filter(p => p.alive);
       const itPlayer = players.find(p => p.isIt);
       if (!itPlayer && players.length > 0) {
         const randomPlayer = players[Math.floor(Math.random() * players.length)];
@@ -474,6 +500,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       count: this.s.players.size,
       maxClients: this.maxClients,
       roomCode: this.metadata?.roomCode ?? "",
+      gameStarted: this.s.gameStarted,
+      rematchVote: this.getRematchVoteState(),
     };
 
     if (client) {
@@ -534,7 +562,7 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
   }
 
   startGame() {
-    void this.lock();
+    this.clearRematchVote();
     this.serverTick = 0;
     this.lastFrameBroadcast = 0;
     this.s.gameStarted = true;
@@ -546,10 +574,20 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
     this.playerLastProcessedTick.clear();
     this.playerPendingInputs.clear();
 
-    const players = playerList(this.s);
+    const players = playerList(this.s).filter(player => player.alive);
+    if (players.length < 2) {
+      this.s.gameStarted = false;
+      return;
+    }
     const initialItId = players[Math.floor(Math.random()*players.length)]?.id ?? "";
     let idx = 0;
     this.s.players.forEach((player) => {
+      player.score = 0;
+      if (!player.alive) {
+        player.isIt = false;
+        player.ready = false;
+        return;
+      }
       const spawn = this.map.spawnPoints[idx % this.map.spawnPoints.length];
       player.x = spawn.x;
       player.y = spawn.y;
@@ -557,7 +595,6 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       player.vy = 0;
       player.isIt = player.id === initialItId;
       player.alive = true;
-      player.score = 0;
       player.activePowerUpType = -1;
       player.activePowerUpRemaining = 0;
       player.activePowerUpDuration = 0;
@@ -972,6 +1009,8 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       name: p.name,
       color: p.color,
       wasIt: p.isIt,
+      participated: p.alive,
+      tags: p.score,
     }));
 
     this.s.players.forEach(p => { p.ready = true; });
@@ -982,9 +1021,44 @@ export class TagRoom extends (Room as unknown as typeof RoomType) {
       loserName: itPlayer?.name ?? "Unknown",
       scores,
     });
+    this.rematchVotes.clear();
+    this.rematchVoteEndsAt = Date.now() + 10_000;
+    this.broadcastRematchVote();
+    this.rematchVoteTimer = setTimeout(() => this.finishRematchVote(), 10_000);
+  }
+
+  private getRematchVoteState() {
+    const eligible = playerList(this.s).map(p => p.id);
+    const yesPlayers = eligible.filter(id => this.rematchVotes.get(id) === true);
+    return { active: this.rematchVoteEndsAt > Date.now(), deadline: this.rematchVoteEndsAt, yes: yesPlayers.length, eligible: eligible.length, yesIds: yesPlayers };
+  }
+
+  private broadcastRematchVote() {
+    this.broadcast("rematchVoteState", this.getRematchVoteState());
+  }
+
+  private clearRematchVote() {
+    if (this.rematchVoteTimer) clearTimeout(this.rematchVoteTimer);
+    this.rematchVoteTimer = null;
+    this.rematchVoteEndsAt = 0;
+    this.rematchVotes.clear();
+  }
+
+  private finishRematchVote() {
+    this.rematchVoteTimer = null;
+    const yesIds = playerList(this.s).filter(p => this.rematchVotes.get(p.id) === true).map(p => p.id);
+    this.rematchVoteEndsAt = 0;
+    this.broadcastRematchVote();
+    if (yesIds.length >= 2) {
+      this.s.players.forEach(p => { p.alive = yesIds.includes(p.id); p.ready = false; });
+      this.startGame();
+    } else {
+      this.broadcast("rematchVoteClosed", { yes: yesIds.length, needed: 2 });
+    }
   }
 
   onDispose() {
+    this.clearRematchVote();
     this.jumpBuffer.clear();
     this.lastUpInputs.clear();
     this.playerLastClientTick.clear();
